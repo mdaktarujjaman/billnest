@@ -1,0 +1,14 @@
+{
+    "name": "itzone360/billnest",
+    "description": "WordPress POS, invoicing, inventory & basic accounting plugin",
+    "type": "wordpress-plugin",
+    "license": "GPL-2.0-or-later",
+    "require": {
+        "php": ">=8.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "BillNest\\": "includes/"
+        }
+    }
+}

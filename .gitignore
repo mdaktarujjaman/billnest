@@ -1,0 +1,6 @@
+/vendor/
+composer.lock
+node_modules/
+.DS_Store
+*.log
+wp-content/debug.log
