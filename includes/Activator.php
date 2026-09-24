@@ -34,7 +34,51 @@ class Activator
 
         $charset_collate = $wpdb->get_charset_collate();
 
+        self::create_categories_table($charset_collate);
         self::create_products_table($charset_collate);
+        self::create_customers_table($charset_collate);
+    }
+
+    private static function create_customers_table($charset_collate)
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'billnest_customers';
+
+        $sql = "CREATE TABLE $table_name (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        name VARCHAR(255) NOT NULL,
+        phone VARCHAR(30) DEFAULT NULL,
+        email VARCHAR(255) DEFAULT NULL,
+        address TEXT DEFAULT NULL,
+        opening_balance DECIMAL(12,2) NOT NULL DEFAULT 0,
+        current_due DECIMAL(12,2) NOT NULL DEFAULT 0,
+        status VARCHAR(20) NOT NULL DEFAULT 'active',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY  (id),
+        KEY phone (phone),
+        KEY status (status)
+    ) $charset_collate ENGINE=InnoDB;";
+
+        dbDelta($sql);
+    }
+
+    // Create the categories table with the specified schema
+    private static function create_categories_table($charset_collate)
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'billnest_categories';
+
+        $sql = "CREATE TABLE $table_name (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        name VARCHAR(255) NOT NULL,
+        parent_id BIGINT UNSIGNED DEFAULT NULL,
+        PRIMARY KEY  (id),
+        KEY parent_id (parent_id)
+    ) $charset_collate ENGINE=InnoDB;";
+
+        dbDelta($sql);
     }
 
     // Create the products table with the specified schema
