@@ -1,20 +1,24 @@
 <?php
+
 namespace BillNest\DB;
 
-if ( ! defined( 'ABSPATH' ) ) {
+if (! defined('ABSPATH')) {
     exit;
 }
 
-class CustomerRepository {
+class CustomerRepository
+{
 
     private string $table;
 
-    public function __construct() {
+    public function __construct()
+    {
         global $wpdb;
         $this->table = $wpdb->prefix . 'billnest_customers';
     }
 
-    public function get_all(): array {
+    public function get_all(): array
+    {
         global $wpdb;
 
         return $wpdb->get_results(
@@ -22,17 +26,19 @@ class CustomerRepository {
         );
     }
 
-    public function get_by_id( int $id ): ?object {
+    public function get_by_id(int $id): ?object
+    {
         global $wpdb;
 
         $customer = $wpdb->get_row(
-            $wpdb->prepare( "SELECT * FROM {$this->table} WHERE id = %d", $id )
+            $wpdb->prepare("SELECT * FROM {$this->table} WHERE id = %d", $id)
         );
 
         return $customer ?: null;
     }
 
-    public function create( array $data ): int|false {
+    public function create(array $data): int|false
+    {
         global $wpdb;
 
         $inserted = $wpdb->insert(
@@ -45,15 +51,16 @@ class CustomerRepository {
                 'opening_balance'  => $data['opening_balance'],
                 'current_due'      => $data['opening_balance'],
                 'status'           => 'active',
-                'created_at'       => current_time( 'mysql' ),
+                'created_at'       => current_time('mysql'),
             ],
-            [ '%s', '%s', '%s', '%s', '%f', '%f', '%s', '%s' ]
+            ['%s', '%s', '%s', '%s', '%f', '%f', '%s', '%s']
         );
 
         return $inserted ? $wpdb->insert_id : false;
     }
 
-    public function update( int $id, array $data ): bool {
+    public function update(int $id, array $data): bool
+    {
         global $wpdb;
 
         $updated = $wpdb->update(
@@ -64,23 +71,37 @@ class CustomerRepository {
                 'email'   => $data['email'],
                 'address' => $data['address'],
             ],
-            [ 'id' => $id ],
-            [ '%s', '%s', '%s', '%s' ],
-            [ '%d' ]
+            ['id' => $id],
+            ['%s', '%s', '%s', '%s'],
+            ['%d']
         );
 
         return $updated !== false;
     }
 
-    public function delete( int $id ): bool {
+    public function delete(int $id): bool
+    {
         global $wpdb;
 
         return $wpdb->update(
             $this->table,
-            [ 'status' => 'inactive' ],
-            [ 'id' => $id ],
-            [ '%s' ],
-            [ '%d' ]
+            ['status' => 'inactive'],
+            ['id' => $id],
+            ['%s'],
+            ['%d']
         ) !== false;
+    }
+
+    public function increment_due(int $id, float $amount): void
+    {
+        global $wpdb;
+
+        $wpdb->query(
+            $wpdb->prepare(
+                "UPDATE {$this->table} SET current_due = current_due + %f WHERE id = %d",
+                $amount,
+                $id
+            )
+        );
     }
 }

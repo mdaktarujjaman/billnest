@@ -14,4 +14,6 @@ abstract class AdminPage {
     public function get_capability(): string {
         return 'manage_billnest';
     }
+
+    public function enqueue_assets(): void {}
 }
