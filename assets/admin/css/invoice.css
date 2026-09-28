@@ -1,0 +1,141 @@
+.billnest-invoice {
+    max-width: 820px;
+    background: #fff;
+    border: 1px solid #dcdcde;
+    border-radius: 8px;
+    padding: 28px 32px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.billnest-invoice-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding-bottom: 18px;
+    border-bottom: 2px solid #2271b1;
+    margin-bottom: 20px;
+}
+
+.billnest-invoice-header h2 {
+    margin: 0 0 8px;
+    font-size: 22px;
+    color: #135e96;
+}
+
+.billnest-status {
+    display: inline-block;
+    padding: 3px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    background: #e7f6ec;
+    color: #0a7a33;
+}
+
+.billnest-status-cancelled,
+.billnest-status-returned {
+    background: #fcebea;
+    color: #b32d2e;
+}
+
+.billnest-status-draft {
+    background: #f0f0f1;
+    color: #50575e;
+}
+
+.billnest-invoice-meta {
+    display: flex;
+    gap: 48px;
+    margin-bottom: 24px;
+}
+
+.billnest-meta-label {
+    display: block;
+    font-size: 12px;
+    color: #787c82;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin-bottom: 2px;
+}
+
+.billnest-invoice-items {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 20px;
+}
+
+.billnest-invoice-items th {
+    background: #f0f6fc;
+    text-align: left;
+    padding: 10px 12px;
+    font-weight: 600;
+    border-bottom: 1px solid #c3dcf0;
+}
+
+.billnest-invoice-items td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #f0f0f1;
+}
+
+.billnest-invoice-items .billnest-num {
+    text-align: right;
+}
+
+.billnest-invoice-summary {
+    max-width: 320px;
+    margin-left: auto;
+}
+
+.billnest-summary-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    font-size: 14px;
+}
+
+.billnest-summary-total {
+    border-top: 2px solid #2271b1;
+    margin-top: 6px;
+    padding-top: 10px;
+    font-size: 18px;
+    font-weight: 700;
+    color: #135e96;
+}
+
+.billnest-summary-due {
+    font-weight: 700;
+    color: #b32d2e;
+}
+
+.billnest-invoice-remarks {
+    margin-top: 20px;
+    padding-top: 14px;
+    border-top: 1px dashed #dcdcde;
+    color: #50575e;
+}
+
+@media print {
+    #adminmenumain,
+    #wpadminbar,
+    #wpfooter,
+    .billnest-no-print,
+    .notice {
+        display: none !important;
+    }
+
+    #wpcontent,
+    #wpfooter {
+        margin-left: 0 !important;
+    }
+
+    html.wp-toolbar {
+        padding-top: 0 !important;
+    }
+
+    .billnest-invoice {
+        max-width: 100%;
+        border: none;
+        box-shadow: none;
+        padding: 0;
+    }
+}
