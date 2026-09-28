@@ -5,7 +5,7 @@
     border-radius: 8px;
     padding: 0 0 28px 0;
     margin-top: 16px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
     overflow: hidden;
 }
 
@@ -54,20 +54,44 @@
     font-weight: 600;
 }
 
+#billnest-items-table th:nth-child(1),
+#billnest-items-table td:nth-child(1) {
+    width: 420px !important;
+}
+
+#billnest-items-table th:nth-child(2),
+#billnest-items-table td:nth-child(2) {
+    width: 180px !important;
+    text-align: left !important;
+    padding-left: 14px !important;
+}
+
+#billnest-items-table th:nth-child(3),
+#billnest-items-table td:nth-child(3) {
+    width: auto !important;
+    text-align: right !important;
+    padding-right: 16px !important;
+}
+
+#billnest-items-table th:nth-child(4),
+#billnest-items-table td:nth-child(4) {
+    width: 50px !important;
+}
+
 #billnest-items-table .billnest-product-select {
     width: 100%;
     min-height: 38px;
 }
 
 #billnest-items-table .billnest-qty-input {
-    width: 90px;
+    width: 140px;
+    min-height: 38px;
     text-align: center;
+    font-size: 15px;
 }
 
 #billnest-items-table .billnest-line-total {
     font-weight: 700;
-    text-align: right;
-    padding-right: 16px !important;
     color: #2271b1;
 }
 
@@ -117,6 +141,24 @@
     color: #135e96;
 }
 
+.billnest-totals-box .billnest-balance-row {
+    margin-top: 6px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.billnest-totals-box .billnest-balance-row.billnest-change {
+    background: #e7f6ec;
+    color: #0a7a33;
+}
+
+.billnest-totals-box .billnest-balance-row.billnest-due {
+    background: #fcebea;
+    color: #b32d2e;
+}
+
 #billnest-subtotal {
     font-weight: 600;
     color: #1d2327;
@@ -130,7 +172,7 @@
     font-weight: 600;
     background: #2271b1;
     border-color: #135e96;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 }
 
 .billnest-pos-wrap .button-primary:hover {

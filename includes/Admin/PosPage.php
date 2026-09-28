@@ -91,11 +91,12 @@ class PosPage extends AdminPage
         echo '<div class="billnest-totals-box">';
         echo '<div class="billnest-row"><span>' . esc_html__('Subtotal', 'billnest') . '</span><span id="billnest-subtotal">0.00</span></div>';
         echo '<div class="billnest-row billnest-total-row"><span>' . esc_html__('Total', 'billnest') . '</span><span id="billnest-total-display">0.00</span></div>';
+        echo '<div class="billnest-row billnest-balance-row billnest-change" id="billnest-balance-row"><span id="billnest-balance-label">' . esc_html__('Change to Return', 'billnest') . '</span><span id="billnest-balance-amount">0.00</span></div>';
         echo '</div>';
 
         echo '<table class="form-table">';
         echo '<tr><th><label for="received_amount">' . esc_html__('Received Amount', 'billnest') . '</label></th>';
-        echo '<td><input type="number" step="0.01" name="received_amount" id="received_amount" value="0" required></td></tr>';
+        echo '<td><input type="number" step="0.01" min="0" name="received_amount" id="received_amount" value="0" required></td></tr>';
         echo '</table>';
 
         submit_button(__('Save Invoice', 'billnest'));
@@ -120,6 +121,7 @@ class PosPage extends AdminPage
             (function() {
                 var products = <?php echo wp_json_encode($product_data); ?>;
                 var body = document.getElementById('billnest-items-body');
+                var receivedInput = document.getElementById('received_amount');
                 var rowIndex = 0;
 
                 function buildOptions() {
@@ -130,12 +132,24 @@ class PosPage extends AdminPage
                     return html;
                 }
 
-                function recalcRow(row) {
-                    var price = parseFloat(row.querySelector('.billnest-product-select').selectedOptions[0].dataset.price);
-                    var qty = parseFloat(row.querySelector('.billnest-qty-input').value) || 0;
-                    var lineTotal = price * qty;
-                    row.querySelector('.billnest-line-total').textContent = lineTotal.toFixed(2);
-                    recalcSubtotal();
+                function updateBalance() {
+                    var total = parseFloat(document.getElementById('billnest-total-display').textContent) || 0;
+                    var received = parseFloat(receivedInput.value) || 0;
+                    var diff = received - total;
+
+                    var row = document.getElementById('billnest-balance-row');
+                    var label = document.getElementById('billnest-balance-label');
+                    var amount = document.getElementById('billnest-balance-amount');
+
+                    if (diff >= 0) {
+                        row.className = 'billnest-row billnest-balance-row billnest-change';
+                        label.textContent = 'Change to Return';
+                        amount.textContent = diff.toFixed(2);
+                    } else {
+                        row.className = 'billnest-row billnest-balance-row billnest-due';
+                        label.textContent = 'Due Amount';
+                        amount.textContent = Math.abs(diff).toFixed(2);
+                    }
                 }
 
                 function recalcSubtotal() {
@@ -145,6 +159,15 @@ class PosPage extends AdminPage
                     });
                     document.getElementById('billnest-subtotal').textContent = total.toFixed(2);
                     document.getElementById('billnest-total-display').textContent = total.toFixed(2);
+                    updateBalance();
+                }
+
+                function recalcRow(row) {
+                    var price = parseFloat(row.querySelector('.billnest-product-select').selectedOptions[0].dataset.price);
+                    var qty = parseFloat(row.querySelector('.billnest-qty-input').value) || 0;
+                    var lineTotal = price * qty;
+                    row.querySelector('.billnest-line-total').textContent = lineTotal.toFixed(2);
+                    recalcSubtotal();
                 }
 
                 function addRow() {
@@ -172,6 +195,7 @@ class PosPage extends AdminPage
                     recalcRow(row);
                 }
 
+                receivedInput.addEventListener('input', updateBalance);
                 document.getElementById('billnest-add-item').addEventListener('click', addRow);
 
                 addRow();
