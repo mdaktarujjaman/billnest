@@ -5,6 +5,7 @@ namespace BillNest\Admin;
 use BillNest\DB\CustomerRepository;
 use BillNest\DB\ProductRepository;
 use BillNest\Services\InvoiceService;
+use BillNest\Services\SettingsService;
 
 if (! defined('ABSPATH')) {
     exit;
@@ -43,6 +44,7 @@ class PosPage extends AdminPage
 
         $customers = (new CustomerRepository())->get_all();
         $products  = (new ProductRepository())->get_all();
+        $settings  = new SettingsService();
 
         echo '<div class="wrap">';
         echo '<h1>' . esc_html($this->get_title()) . '</h1>';
@@ -51,13 +53,13 @@ class PosPage extends AdminPage
             echo '<div class="notice notice-success"><p>' . esc_html($message) . '</p></div>';
         }
 
-        $this->render_form($customers, $products);
-        $this->render_script($products);
+        $this->render_form($customers, $products, $settings);
+        $this->render_script($products, $settings);
 
         echo '</div>';
     }
 
-    private function render_form(array $customers, array $products): void
+    private function render_form(array $customers, array $products, SettingsService $settings): void
     {
         echo '<div class="billnest-pos-wrap">';
         echo '<div class="billnest-pos-header">' . esc_html__('Create New Invoice', 'billnest') . '</div>';
@@ -88,10 +90,13 @@ class PosPage extends AdminPage
 
         echo '<button type="button" class="button" id="billnest-add-item">' . esc_html__('+ Add Item', 'billnest') . '</button>';
 
+        $symbol = esc_html($settings->get('currency_symbol'));
+        $before = $settings->get('currency_position') !== 'after';
+
         echo '<div class="billnest-totals-box">';
-        echo '<div class="billnest-row"><span>' . esc_html__('Subtotal', 'billnest') . '</span><span id="billnest-subtotal">0.00</span></div>';
-        echo '<div class="billnest-row billnest-total-row"><span>' . esc_html__('Total', 'billnest') . '</span><span id="billnest-total-display">0.00</span></div>';
-        echo '<div class="billnest-row billnest-balance-row billnest-change" id="billnest-balance-row"><span id="billnest-balance-label">' . esc_html__('Change to Return', 'billnest') . '</span><span id="billnest-balance-amount">0.00</span></div>';
+        echo '<div class="billnest-row"><span>' . esc_html__('Subtotal', 'billnest') . '</span><span>' . ($before ? $symbol : '') . '<span id="billnest-subtotal">0.00</span>' . ($before ? '' : $symbol) . '</span></div>';
+        echo '<div class="billnest-row billnest-total-row"><span>' . esc_html__('Total', 'billnest') . '</span><span>' . ($before ? $symbol : '') . '<span id="billnest-total-display">0.00</span>' . ($before ? '' : $symbol) . '</span></div>';
+        echo '<div class="billnest-row billnest-balance-row billnest-change" id="billnest-balance-row"><span id="billnest-balance-label">' . esc_html__('Change to Return', 'billnest') . '</span><span>' . ($before ? $symbol : '') . '<span id="billnest-balance-amount">0.00</span>' . ($before ? '' : $symbol) . '</span></div>';
         echo '</div>';
 
         echo '<table class="form-table">';
@@ -105,7 +110,7 @@ class PosPage extends AdminPage
         echo '</div>';
     }
 
-    private function render_script(array $products): void
+    private function render_script(array $products, SettingsService $settings): void
     {
         $product_data = [];
         foreach ($products as $product) {
@@ -120,6 +125,8 @@ class PosPage extends AdminPage
         <script>
             (function() {
                 var products = <?php echo wp_json_encode($product_data); ?>;
+                var currencySymbol = <?php echo wp_json_encode($settings->get('currency_symbol')); ?>;
+                var currencyBefore = <?php echo wp_json_encode($settings->get('currency_position') !== 'after'); ?>;
                 var body = document.getElementById('billnest-items-body');
                 var receivedInput = document.getElementById('received_amount');
                 var rowIndex = 0;
@@ -155,7 +162,7 @@ class PosPage extends AdminPage
                 function recalcSubtotal() {
                     var total = 0;
                     body.querySelectorAll('tr').forEach(function(row) {
-                        total += parseFloat(row.querySelector('.billnest-line-total').textContent) || 0;
+                        total += parseFloat(row.querySelector('.billnest-line-total-value').textContent) || 0;
                     });
                     document.getElementById('billnest-subtotal').textContent = total.toFixed(2);
                     document.getElementById('billnest-total-display').textContent = total.toFixed(2);
@@ -166,7 +173,7 @@ class PosPage extends AdminPage
                     var price = parseFloat(row.querySelector('.billnest-product-select').selectedOptions[0].dataset.price);
                     var qty = parseFloat(row.querySelector('.billnest-qty-input').value) || 0;
                     var lineTotal = price * qty;
-                    row.querySelector('.billnest-line-total').textContent = lineTotal.toFixed(2);
+                    row.querySelector('.billnest-line-total-value').textContent = lineTotal.toFixed(2);
                     recalcSubtotal();
                 }
 
@@ -176,7 +183,7 @@ class PosPage extends AdminPage
                     row.innerHTML =
                         '<td><select name="items[' + index + '][product_id]" class="billnest-product-select">' + buildOptions() + '</select></td>' +
                         '<td><input type="number" step="0.01" min="0.01" value="1" name="items[' + index + '][qty]" class="billnest-qty-input"></td>' +
-                        '<td class="billnest-line-total">0.00</td>' +
+                        '<td class="billnest-line-total">' + (currencyBefore ? currencySymbol : '') + '<span class="billnest-line-total-value">0.00</span>' + (currencyBefore ? '' : currencySymbol) + '</td>' +
                         '<td><button type="button" class="button billnest-remove-row">&times;</button></td>';
 
                     body.appendChild(row);

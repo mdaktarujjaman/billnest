@@ -139,3 +139,34 @@
         padding: 0;
     }
 }
+
+.billnest-business-header {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: 18px;
+    padding-bottom: 14px;
+    border-bottom: 1px dashed #dcdcde;
+    font-size: 13px;
+    color: #50575e;
+}
+
+.billnest-business-header strong {
+    font-size: 17px;
+    color: #1d2327;
+}
+
+.billnest-header-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.billnest-return-btn {
+    color: #b32d2e !important;
+    border-color: #b32d2e !important;
+}
+
+.billnest-return-btn:hover {
+    background: #b32d2e !important;
+    color: #fff !important;
+}

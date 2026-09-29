@@ -50,4 +50,16 @@ class SettingsService
 
         update_option(self::OPTION, $clean);
     }
+
+    public function format_amount(float $amount): string
+    {
+        $settings  = $this->all();
+        $formatted = number_format($amount, 2);
+
+        if ($settings['currency_position'] === 'after') {
+            return $formatted . $settings['currency_symbol'];
+        }
+
+        return $settings['currency_symbol'] . $formatted;
+    }
 }
