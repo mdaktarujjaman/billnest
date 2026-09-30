@@ -170,3 +170,54 @@
     background: #b32d2e !important;
     color: #fff !important;
 }
+
+.billnest-cashbook-summary {
+    display: flex;
+    gap: 16px;
+    margin: 20px 0;
+}
+
+.billnest-cash-box {
+    flex: 1;
+    padding: 18px 20px;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.billnest-cash-box span {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    opacity: 0.8;
+}
+
+.billnest-cash-box strong {
+    font-size: 22px;
+}
+
+.billnest-cash-in {
+    background: #e7f6ec;
+    color: #0a7a33;
+}
+
+.billnest-cash-out {
+    background: #fcebea;
+    color: #b32d2e;
+}
+
+.billnest-cash-balance {
+    background: #f0f6fc;
+    color: #135e96;
+}
+
+.billnest-cash-in-text {
+    color: #0a7a33;
+    font-weight: 600;
+}
+
+.billnest-cash-out-text {
+    color: #b32d2e;
+    font-weight: 600;
+}

@@ -66,6 +66,7 @@ class SalesListPage extends AdminPage
             (new ReturnService())->process_full_return($invoice_id);
             $redirect = add_query_arg('returned', '1', $redirect);
         } catch (\Throwable $e) {
+            error_log('BillNest return failed: ' . $e->getMessage());
             $redirect = add_query_arg('return_error', '1', $redirect);
         }
 

@@ -42,6 +42,7 @@ class Activator
         self::create_invoices_table($charset_collate);
         self::create_invoice_items_table($charset_collate);
         self::create_stock_log_table($charset_collate);
+        self::create_cashbook_table($charset_collate);
     }
 
     private static function create_customers_table($charset_collate)
@@ -208,6 +209,29 @@ class Activator
         PRIMARY KEY  (id),
         KEY product_id (product_id),
         KEY ref (ref_id, ref_type)
+    ) $charset_collate ENGINE=InnoDB;";
+
+        dbDelta($sql);
+    }
+
+    private static function create_cashbook_table($charset_collate)
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'billnest_cashbook';
+
+        $sql = "CREATE TABLE $table_name (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        type VARCHAR(10) NOT NULL,
+        amount DECIMAL(12,2) NOT NULL,
+        source VARCHAR(20) NOT NULL,
+        ref_id BIGINT UNSIGNED DEFAULT NULL,
+        remarks TEXT DEFAULT NULL,
+        created_by BIGINT UNSIGNED DEFAULT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY  (id),
+        KEY type (type),
+        KEY source (source)
     ) $charset_collate ENGINE=InnoDB;";
 
         dbDelta($sql);

@@ -4,6 +4,7 @@ namespace BillNest\Services;
 
 use BillNest\DB\InvoiceRepository;
 use BillNest\DB\CustomerRepository;
+use BillNest\DB\CashbookRepository;
 
 if (! defined('ABSPATH')) {
     exit;
@@ -50,6 +51,17 @@ class ReturnService
 
             if ($invoice->customer_id) {
                 $this->customers->increment_due((int) $invoice->customer_id, -(float) $invoice->due_amount);
+            }
+
+            if ((float) $invoice->received_amount > 0) {
+                (new CashbookRepository())->create([
+                    'type'       => 'out',
+                    'amount'     => (float) $invoice->received_amount,
+                    'source'     => 'sales_return',
+                    'ref_id'     => $invoice_id,
+                    'remarks'    => 'Return for invoice ' . $invoice->invoice_no,
+                    'created_by' => get_current_user_id(),
+                ]);
             }
 
             $this->invoices->update_status($invoice_id, 'returned');
