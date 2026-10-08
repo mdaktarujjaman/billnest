@@ -58,6 +58,20 @@ class InvoiceRepository
         );
     }
 
+    public function get_open_invoices_for_customer(int $customer_id): array
+    {
+        global $wpdb;
+
+        return $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT * FROM {$this->table}
+                 WHERE customer_id = %d AND status = 'completed' AND due_amount > 0
+                 ORDER BY id ASC",
+                $customer_id
+            )
+        );
+    }
+
     public function create_invoice(array $data): int
     {
         global $wpdb;
@@ -113,6 +127,22 @@ class InvoiceRepository
             ['id' => $id],
             ['%s'],
             ['%d']
+        );
+    }
+
+    public function apply_payment(int $id, float $amount): void
+    {
+        global $wpdb;
+
+        $wpdb->query(
+            $wpdb->prepare(
+                "UPDATE {$this->table}
+                 SET received_amount = received_amount + %f, due_amount = due_amount - %f
+                 WHERE id = %d",
+                $amount,
+                $amount,
+                $id
+            )
         );
     }
 }

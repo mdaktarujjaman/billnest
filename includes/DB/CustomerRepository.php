@@ -26,6 +26,24 @@ class CustomerRepository
         );
     }
 
+    public function get_with_due(): array
+    {
+        global $wpdb;
+
+        return $wpdb->get_results(
+            "SELECT * FROM {$this->table} WHERE status = 'active' AND current_due > 0 ORDER BY current_due DESC"
+        );
+    }
+
+    public function get_total_due(): float
+    {
+        global $wpdb;
+
+        return (float) $wpdb->get_var(
+            "SELECT SUM(current_due) FROM {$this->table} WHERE status = 'active' AND current_due > 0"
+        );
+    }
+
     public function get_by_id(int $id): ?object
     {
         global $wpdb;
@@ -44,14 +62,14 @@ class CustomerRepository
         $inserted = $wpdb->insert(
             $this->table,
             [
-                'name'             => $data['name'],
-                'phone'            => $data['phone'],
-                'email'            => $data['email'],
-                'address'          => $data['address'],
-                'opening_balance'  => $data['opening_balance'],
-                'current_due'      => $data['opening_balance'],
-                'status'           => 'active',
-                'created_at'       => current_time('mysql'),
+                'name'            => $data['name'],
+                'phone'           => $data['phone'],
+                'email'           => $data['email'],
+                'address'         => $data['address'],
+                'opening_balance' => $data['opening_balance'],
+                'current_due'     => $data['opening_balance'],
+                'status'          => 'active',
+                'created_at'      => current_time('mysql'),
             ],
             ['%s', '%s', '%s', '%s', '%f', '%f', '%s', '%s']
         );
