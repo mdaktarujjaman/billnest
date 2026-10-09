@@ -1,0 +1,41 @@
+.billnest-image-preview,
+#billnest-remove-image {
+    display: none;
+}
+
+.billnest-image-preview {
+    margin-bottom: 8px;
+}
+
+.billnest-image-preview img {
+    width: 90px;
+    height: 90px;
+    object-fit: cover;
+    background: #fff;
+    border: 1px solid #dcdcde;
+    border-radius: 6px;
+}
+
+.billnest-col-thumb {
+    width: 60px;
+}
+
+.billnest-product-thumb {
+    width: 40px;
+    height: 40px;
+    object-fit: cover;
+    border: 1px solid #dcdcde;
+    border-radius: 4px;
+    vertical-align: middle;
+}
+
+.billnest-low-stock {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 8px;
+    border-radius: 10px;
+    background: #fcebea;
+    color: #b32d2e;
+    font-size: 11px;
+    font-weight: 600;
+}
