@@ -86,6 +86,10 @@ class ProductsPage extends AdminPage
             echo '<div class="notice notice-error"><p>' . esc_html__('Product code and name are required.', 'billnest') . '</p></div>';
         }
 
+        if ($error === 'save_failed') {
+            echo '<div class="notice notice-error"><p>' . esc_html__('Could not save the product. Please check the debug log.', 'billnest') . '</p></div>';
+        }
+
         $this->render_form($editing_product);
 
         if (empty($products)) {
@@ -204,6 +208,11 @@ class ProductsPage extends AdminPage
         $repository = new ProductRepository();
         $product_id = absint($_POST['product_id'] ?? 0);
 
+        if ($repository->code_exists($data['code'], $product_id)) {
+            wp_safe_redirect(add_query_arg('billnest_error', 'duplicate_code', $redirect_url));
+            exit;
+        }
+
         if ($product_id > 0) {
             $success = $repository->update($product_id, $data);
         } else {
@@ -214,7 +223,7 @@ class ProductsPage extends AdminPage
         if ($success) {
             $this->sync_stock((int) $product_id, $target_stock);
         } else {
-            $redirect_url = add_query_arg('billnest_error', 'duplicate_code', $redirect_url);
+            $redirect_url = add_query_arg('billnest_error', 'save_failed', $redirect_url);
         }
 
         wp_safe_redirect($redirect_url);

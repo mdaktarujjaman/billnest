@@ -1,122 +1,38 @@
 <?php
 
-namespace BillNest\DB;
+namespace BillNest\Modules;
+
+use BillNest\Module;
+use BillNest\Admin\AdminMenu;
+use BillNest\Admin\ProductsPage;
+use BillNest\Admin\CategoriesPage;
+use BillNest\Admin\CustomersPage;
+use BillNest\Admin\PosPage;
+use BillNest\Admin\SalesListPage;
+use BillNest\Admin\DueCollectionPage;
+use BillNest\Admin\CashbookPage;
+use BillNest\Admin\SettingsPage;
 
 if (! defined('ABSPATH')) {
     exit;
 }
 
-class ProductRepository
+class ProductsModule implements Module
 {
 
-    private string $table;
-    private string $categories_table;
-
-    public function __construct()
+    public function init(): void
     {
-        global $wpdb;
-        $this->table            = $wpdb->prefix . 'billnest_products';
-        $this->categories_table = $wpdb->prefix . 'billnest_categories';
-    }
+        $menu = new AdminMenu();
 
-    public function get_all(): array
-    {
-        global $wpdb;
+        $menu->register_page(new ProductsPage());
+        $menu->register_page(new CategoriesPage());
+        $menu->register_page(new CustomersPage());
+        $menu->register_page(new PosPage());
+        $menu->register_page(new SalesListPage());
+        $menu->register_page(new DueCollectionPage());
+        $menu->register_page(new CashbookPage());
+        $menu->register_page(new SettingsPage());
 
-        return $wpdb->get_results(
-            "SELECT p.*, c.name AS category_name
-             FROM {$this->table} p
-             LEFT JOIN {$this->categories_table} c ON p.category_id = c.id
-             WHERE p.status = 'active'
-             ORDER BY p.name ASC"
-        );
-    }
-
-    public function get_by_id(int $id): ?object
-    {
-        global $wpdb;
-
-        $product = $wpdb->get_row(
-            $wpdb->prepare("SELECT * FROM {$this->table} WHERE id = %d", $id)
-        );
-
-        return $product ?: null;
-    }
-
-    public function create(array $data): int|false
-    {
-        global $wpdb;
-
-        $inserted = $wpdb->insert(
-            $this->table,
-            [
-                'code'           => $data['code'],
-                'name'           => $data['name'],
-                'category_id'    => $data['category_id'] ?: null,
-                'model'          => $data['model'] ?: null,
-                'unit'           => $data['unit'],
-                'purchase_price' => $data['purchase_price'],
-                'sale_price'     => $data['sale_price'],
-                'reorder_level'  => $data['reorder_level'],
-                'image_url'      => $data['image_url'] ?: null,
-                'status'         => 'active',
-                'created_at'     => current_time('mysql'),
-                'updated_at'     => current_time('mysql'),
-            ],
-            ['%s', '%s', '%d', '%s', '%s', '%f', '%f', '%f', '%s', '%s', '%s', '%s']
-        );
-
-        return $inserted ? $wpdb->insert_id : false;
-    }
-
-    public function update(int $id, array $data): bool
-    {
-        global $wpdb;
-
-        $updated = $wpdb->update(
-            $this->table,
-            [
-                'code'           => $data['code'],
-                'name'           => $data['name'],
-                'category_id'    => $data['category_id'] ?: null,
-                'model'          => $data['model'] ?: null,
-                'unit'           => $data['unit'],
-                'purchase_price' => $data['purchase_price'],
-                'sale_price'     => $data['sale_price'],
-                'reorder_level'  => $data['reorder_level'],
-                'image_url'      => $data['image_url'] ?: null,
-                'updated_at'     => current_time('mysql'),
-            ],
-            ['id' => $id],
-            ['%s', '%s', '%d', '%s', '%s', '%f', '%f', '%f', '%s', '%s'],
-            ['%d']
-        );
-
-        return $updated !== false;
-    }
-
-    public function delete(int $id): bool
-    {
-        global $wpdb;
-
-        $product = $this->get_by_id($id);
-
-        if (! $product) {
-            return false;
-        }
-
-        $updated = $wpdb->update(
-            $this->table,
-            [
-                'code'       => $product->code . '-deleted-' . $id,
-                'status'     => 'inactive',
-                'updated_at' => current_time('mysql'),
-            ],
-            ['id' => $id],
-            ['%s', '%s', '%s'],
-            ['%d']
-        );
-
-        return $updated !== false;
+        $menu->init();
     }
 }

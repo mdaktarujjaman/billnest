@@ -1,22 +1,26 @@
 <?php
+
 namespace BillNest\DB;
 
-if ( ! defined( 'ABSPATH' ) ) {
+if (! defined('ABSPATH')) {
     exit;
 }
 
-class ProductRepository {
+class ProductRepository
+{
 
     private string $table;
     private string $categories_table;
 
-    public function __construct() {
+    public function __construct()
+    {
         global $wpdb;
         $this->table            = $wpdb->prefix . 'billnest_products';
         $this->categories_table = $wpdb->prefix . 'billnest_categories';
     }
 
-    public function get_all(): array {
+    public function get_all(): array
+    {
         global $wpdb;
 
         return $wpdb->get_results(
@@ -28,63 +32,92 @@ class ProductRepository {
         );
     }
 
-    public function get_by_id( int $id ): ?object {
+    public function get_by_id(int $id): ?object
+    {
         global $wpdb;
 
         $product = $wpdb->get_row(
-            $wpdb->prepare( "SELECT * FROM {$this->table} WHERE id = %d", $id )
+            $wpdb->prepare("SELECT * FROM {$this->table} WHERE id = %d", $id)
         );
 
         return $product ?: null;
     }
 
-    public function create( array $data ): int|false {
+    public function code_exists(string $code, int $exclude_id = 0): bool
+    {
+        global $wpdb;
+
+        $found = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT id FROM {$this->table} WHERE code = %s AND id != %d LIMIT 1",
+                $code,
+                $exclude_id
+            )
+        );
+
+        return $found !== null;
+    }
+
+    public function create(array $data): int|false
+    {
         global $wpdb;
 
         $inserted = $wpdb->insert(
             $this->table,
             [
-                'code'        => $data['code'],
-                'name'        => $data['name'],
-                'category_id' => $data['category_id'] ?: null,
-                'sale_price'  => $data['sale_price'],
-                'stock_qty'   => $data['stock_qty'],
-                'status'      => 'active',
-                'created_at'  => current_time( 'mysql' ),
-                'updated_at'  => current_time( 'mysql' ),
+                'code'           => $data['code'],
+                'name'           => $data['name'],
+                'category_id'    => $data['category_id'] ?: null,
+                'model'          => $data['model'] ?: null,
+                'unit'           => $data['unit'],
+                'purchase_price' => $data['purchase_price'],
+                'sale_price'     => $data['sale_price'],
+                'stock_qty'      => 0,
+                'reorder_level'  => $data['reorder_level'],
+                'image_url'      => $data['image_url'] ?: null,
+                'status'         => 'active',
+                'created_at'     => current_time('mysql'),
+                'updated_at'     => current_time('mysql'),
             ],
-            [ '%s', '%s', '%d', '%f', '%f', '%s', '%s', '%s' ]
+            ['%s', '%s', '%d', '%s', '%s', '%f', '%f', '%f', '%f', '%s', '%s', '%s', '%s']
         );
 
         return $inserted ? $wpdb->insert_id : false;
     }
 
-    public function update( int $id, array $data ): bool {
+    public function update(int $id, array $data): bool
+    {
         global $wpdb;
 
         $updated = $wpdb->update(
             $this->table,
             [
-                'code'        => $data['code'],
-                'name'        => $data['name'],
-                'category_id' => $data['category_id'] ?: null,
-                'sale_price'  => $data['sale_price'],
-                'stock_qty'   => $data['stock_qty'],
-                'updated_at'  => current_time( 'mysql' ),
+                'code'           => $data['code'],
+                'name'           => $data['name'],
+                'category_id'    => $data['category_id'] ?: null,
+                'model'          => $data['model'] ?: null,
+                'unit'           => $data['unit'],
+                'purchase_price' => $data['purchase_price'],
+                'sale_price'     => $data['sale_price'],
+                'reorder_level'  => $data['reorder_level'],
+                'image_url'      => $data['image_url'] ?: null,
+                'updated_at'     => current_time('mysql'),
             ],
-            [ 'id' => $id ],
-            [ '%s', '%s', '%d', '%f', '%f', '%s' ],
-            [ '%d' ]
+            ['id' => $id],
+            ['%s', '%s', '%d', '%s', '%s', '%f', '%f', '%f', '%s', '%s'],
+            ['%d']
         );
 
         return $updated !== false;
     }
 
-    public function delete( int $id ): bool {
+    public function delete(int $id): bool
+    {
         global $wpdb;
 
-        $product = $this->get_by_id( $id );
-        if ( ! $product ) {
+        $product = $this->get_by_id($id);
+
+        if (! $product) {
             return false;
         }
 
@@ -93,11 +126,11 @@ class ProductRepository {
             [
                 'code'       => $product->code . '-deleted-' . $id,
                 'status'     => 'inactive',
-                'updated_at' => current_time( 'mysql' ),
+                'updated_at' => current_time('mysql'),
             ],
-            [ 'id' => $id ],
-            [ '%s', '%s', '%s' ],
-            [ '%d' ]
+            ['id' => $id],
+            ['%s', '%s', '%s'],
+            ['%d']
         );
 
         return $updated !== false;
