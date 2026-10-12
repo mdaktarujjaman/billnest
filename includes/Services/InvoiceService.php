@@ -99,12 +99,16 @@ class InvoiceService
 
     private function calculate_discount(float $subtotal, ?string $type, float $value): float
     {
+        $value = max(0, $value);
+
         if ($type === 'percent') {
+            $value = min($value, 100);
+
             return round($subtotal * ($value / 100), 2);
         }
 
         if ($type === 'flat') {
-            return $value;
+            return round(min($value, $subtotal), 2);
         }
 
         return 0;

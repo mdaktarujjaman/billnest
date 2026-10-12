@@ -95,11 +95,21 @@ class PosPage extends AdminPage
 
         echo '<div class="billnest-totals-box">';
         echo '<div class="billnest-row"><span>' . esc_html__('Subtotal', 'billnest') . '</span><span>' . ($before ? $symbol : '') . '<span id="billnest-subtotal">0.00</span>' . ($before ? '' : $symbol) . '</span></div>';
+        echo '<div class="billnest-row"><span>' . esc_html__('Discount', 'billnest') . '</span><span>-' . ($before ? $symbol : '') . '<span id="billnest-discount-display">0.00</span>' . ($before ? '' : $symbol) . '</span></div>';
         echo '<div class="billnest-row billnest-total-row"><span>' . esc_html__('Total', 'billnest') . '</span><span>' . ($before ? $symbol : '') . '<span id="billnest-total-display">0.00</span>' . ($before ? '' : $symbol) . '</span></div>';
         echo '<div class="billnest-row billnest-balance-row billnest-change" id="billnest-balance-row"><span id="billnest-balance-label">' . esc_html__('Change to Return', 'billnest') . '</span><span>' . ($before ? $symbol : '') . '<span id="billnest-balance-amount">0.00</span>' . ($before ? '' : $symbol) . '</span></div>';
         echo '</div>';
 
         echo '<table class="form-table">';
+
+        echo '<tr><th><label for="discount_type">' . esc_html__('Discount', 'billnest') . '</label></th>';
+        echo '<td><select name="discount_type" id="discount_type">';
+        echo '<option value="">' . esc_html__('None', 'billnest') . '</option>';
+        echo '<option value="flat">' . esc_html__('Flat amount', 'billnest') . '</option>';
+        echo '<option value="percent">' . esc_html__('Percent (%)', 'billnest') . '</option>';
+        echo '</select> ';
+        echo '<input type="number" step="0.01" min="0" name="discount_value" id="discount_value" value="0" disabled></td></tr>';
+
         echo '<tr><th><label for="received_amount">' . esc_html__('Received Amount', 'billnest') . '</label></th>';
         echo '<td><input type="number" step="0.01" min="0" name="received_amount" id="received_amount" value="0" required></td></tr>';
         echo '</table>';
@@ -129,6 +139,9 @@ class PosPage extends AdminPage
                 var currencyBefore = <?php echo wp_json_encode($settings->get('currency_position') !== 'after'); ?>;
                 var body = document.getElementById('billnest-items-body');
                 var receivedInput = document.getElementById('received_amount');
+                var discountType = document.getElementById('discount_type');
+                var discountValue = document.getElementById('discount_value');
+                var subtotal = 0;
                 var rowIndex = 0;
 
                 function buildOptions() {
@@ -137,6 +150,22 @@ class PosPage extends AdminPage
                         html += '<option value="' + p.id + '" data-price="' + p.price + '">' + p.name + ' — ' + p.price + '</option>';
                     });
                     return html;
+                }
+
+                function calcDiscount() {
+                    var type = discountType.value;
+                    var value = Math.max(0, parseFloat(discountValue.value) || 0);
+
+                    if (type === 'percent') {
+                        value = Math.min(value, 100);
+                        return Math.round(subtotal * (value / 100) * 100) / 100;
+                    }
+
+                    if (type === 'flat') {
+                        return Math.min(value, subtotal);
+                    }
+
+                    return 0;
                 }
 
                 function updateBalance() {
@@ -159,14 +188,23 @@ class PosPage extends AdminPage
                     }
                 }
 
-                function recalcSubtotal() {
-                    var total = 0;
-                    body.querySelectorAll('tr').forEach(function(row) {
-                        total += parseFloat(row.querySelector('.billnest-line-total-value').textContent) || 0;
-                    });
-                    document.getElementById('billnest-subtotal').textContent = total.toFixed(2);
+                function updateTotals() {
+                    var discount = calcDiscount();
+                    var total = subtotal - discount;
+
+                    document.getElementById('billnest-subtotal').textContent = subtotal.toFixed(2);
+                    document.getElementById('billnest-discount-display').textContent = discount.toFixed(2);
                     document.getElementById('billnest-total-display').textContent = total.toFixed(2);
                     updateBalance();
+                }
+
+                function recalcSubtotal() {
+                    var sum = 0;
+                    body.querySelectorAll('tr').forEach(function(row) {
+                        sum += parseFloat(row.querySelector('.billnest-line-total-value').textContent) || 0;
+                    });
+                    subtotal = sum;
+                    updateTotals();
                 }
 
                 function recalcRow(row) {
@@ -202,6 +240,15 @@ class PosPage extends AdminPage
                     recalcRow(row);
                 }
 
+                discountType.addEventListener('change', function() {
+                    var hasDiscount = discountType.value !== '';
+                    discountValue.disabled = !hasDiscount;
+                    if (!hasDiscount) {
+                        discountValue.value = 0;
+                    }
+                    updateTotals();
+                });
+                discountValue.addEventListener('input', updateTotals);
                 receivedInput.addEventListener('input', updateBalance);
                 document.getElementById('billnest-add-item').addEventListener('click', addRow);
 
@@ -255,12 +302,24 @@ class PosPage extends AdminPage
             return null;
         }
 
+        $discount_type = sanitize_key(wp_unslash($_POST['discount_type'] ?? ''));
+
+        if (! in_array($discount_type, ['flat', 'percent'], true)) {
+            $discount_type = null;
+        }
+
+        $discount_value = $discount_type ? max(0, floatval($_POST['discount_value'] ?? 0)) : 0;
+
+        if ($discount_type === 'percent') {
+            $discount_value = min($discount_value, 100);
+        }
+
         $service = new InvoiceService();
 
         $invoice_id = $service->create_invoice([
             'customer_id'     => absint($_POST['customer_id'] ?? 0) ?: null,
-            'discount_type'   => null,
-            'discount_value'  => 0,
+            'discount_type'   => $discount_type,
+            'discount_value'  => $discount_value,
             'received_amount' => floatval($_POST['received_amount'] ?? 0),
             'remarks'         => '',
             'created_by'      => get_current_user_id(),
