@@ -7,17 +7,35 @@ Universal WordPress POS, invoicing, inventory & basic accounting plugin. Standal
 
 ---
 
+## Current Status
+
+Working and tested locally:
+
+- Products (code, model, unit, purchase/sale price, reorder level, image, low-stock badge), Categories, Customers, with soft delete
+- Stock changes only through `StockService`, with an append-only `stock_log`
+- POS: multi-item sales, live change/due display, flat and percent discount (limits enforced on the server)
+- Atomic invoice numbering and transaction-safe invoice save
+- Sales List, Invoice Detail with business header and Print
+- Sales Return (whole invoice): restock, due adjustment, cashbook entry
+- Due Collection (customer level, FIFO against oldest invoices)
+- Cashbook with automatic entries from sales, returns and collections, plus manual entries
+- Settings (business info, currency symbol and position)
+
+Not built yet: split payments, card offers, purchases, reports, PDF, REST API. See the roadmap below.
+
+---
+
 ## Tech Stack
 
 | Layer | Choice |
 |---|---|
 | Backend | PHP 8+, WordPress Plugin API, `$wpdb` custom tables |
 | Architecture | PSR-4 autoloading (Composer), namespaced OOP, interface-driven modules |
-| API | WP REST API under `billnest/v1` |
-| Admin UI | Vanilla JS / Alpine.js (no heavy JS framework) |
-| Styling | Plain CSS or compiled Tailwind (no CDN, for marketplace compliance) |
-| PDF | dompdf (via Composer) |
-| Charts | Chart.js (local copy) |
+| API | WP REST API under `billnest/v1` (planned) |
+| Admin UI | Vanilla JS, small jQuery only where the WordPress media library needs it |
+| Styling | Plain CSS in `assets/admin/css`, no CDN assets |
+| PDF | dompdf via Composer (planned) |
+| Charts | Chart.js, local copy (planned) |
 | DB | Custom tables via `dbDelta()`, InnoDB only (transaction support) |
 
 ---
@@ -38,90 +56,73 @@ Universal WordPress POS, invoicing, inventory & basic accounting plugin. Standal
 
 ## Architecture Principles
 
-- **No Custom Post Types** — own DB tables for performance at scale.
-- **Interface-driven modules** — every feature (`Products`, `Customers`, `Invoices`...) implements `BillNest\Module`, registered through `BillNest\Loader`. A failing module logs its error and is skipped; it never takes down the rest of the plugin.
-- **Abstract admin page base** — every admin screen extends `BillNest\Admin\AdminPage`, keeping menu registration and capability checks consistent across pages.
-- **Service layer separates business logic from data access** — DB/repository classes only run queries; service classes hold business rules (stock checks, invoice totals, numbering); admin/REST classes only handle input/output.
-- **Views hold no logic** — template files only render markup.
-- **Transaction-safe writes** — every multi-table write (e.g. invoice creation) wraps in `START TRANSACTION` / `COMMIT` / `ROLLBACK`. Requires InnoDB on every table.
-- **Atomic invoice numbering** — dedicated counter table with row-level locking (`SELECT ... FOR UPDATE`), avoiding race conditions under concurrent POS terminals.
-- **Soft deletes** — status flags over hard deletes, to preserve audit trail on invoices, products, and customers.
+- **No Custom Post Types.** Own DB tables for performance at scale.
+- **Interface-driven modules.** Modules implement `BillNest\Module` and are registered through `BillNest\Loader`. A failing module logs its error and is skipped; it never takes down the rest of the plugin.
+- **Abstract admin page base.** Every admin screen extends `BillNest\Admin\AdminPage`, keeping menu registration and capability checks consistent.
+- **One admin page class + one repository (+ one service when there is business logic) per feature.** No large file sprawl.
+- **Service layer separates business logic from data access.** Repositories only run queries; services hold business rules (stock, invoice totals, numbering, returns, payments); admin pages handle input and output.
+- **Server is the source of truth.** Prices, discount limits and payment limits are validated on the server. Browser checks are only a convenience.
+- **Transaction-safe writes.** Every multi-table write (invoice creation, return, due collection) runs inside `START TRANSACTION` / `COMMIT` / `ROLLBACK`.
+- **Atomic invoice numbering.** A counter table with row-level locking (`SELECT ... FOR UPDATE`) avoids race conditions on concurrent terminals.
+- **Soft deletes.** Status flags over hard deletes, to preserve the audit trail.
+- **Security basics on every page.** Capability check, nonces on writes, sanitized input, escaped output, `$wpdb->prepare()` for user data.
 
 ---
 
-## Folder Structure (target)
+## Folder Structure (current)
 
 ```
 billnest/
 ├── billnest.php                 # bootstrap: constants, hooks, autoload
-├── composer.json                # PSR-4 autoload map
-├── readme.txt                   # WordPress.org / marketplace readme
-├── uninstall.php                # confirmed, destructive cleanup only
-├── vendor/                      # composer dependencies
-├── languages/                   # .pot translation file
+├── composer.json                # PSR-4 map: BillNest\ => includes/
+├── readme.txt                   # WordPress.org readme (to be finalized)
+├── assets/admin/
+│   ├── css/                     # pos.css, invoice.css, products.css
+│   └── js/                      # products.js (media library picker)
 └── includes/
-    ├── Module.php                # interface every module implements
-    ├── Loader.php                # registers + runs modules, isolates failures
-    ├── Activator.php             # dbDelta table creation, capabilities
+    ├── Module.php               # interface every module implements
+    ├── Loader.php               # runs modules, isolates failures
+    ├── Activator.php            # dbDelta tables, capability, db version
     ├── Deactivator.php
-    ├── Admin/
-    │   ├── AdminPage.php         # abstract base for all admin screens
-    │   ├── AdminMenu.php         # central menu registry
-    │   ├── ProductsPage.php
-    │   ├── CustomersPage.php
-    │   ├── PosPage.php
-    │   ├── SalesListPage.php
-    │   ├── DueCollectionPage.php
-    │   ├── ReportsPage.php
-    │   ├── SettingsPage.php
-    │   └── views/                # markup only, no logic
     ├── Modules/
-    │   ├── ProductsModule.php
-    │   ├── CustomersModule.php
-    │   ├── InvoicesModule.php
-    │   ├── PaymentsModule.php
-    │   └── ReportsModule.php
-    ├── DB/                       # $wpdb query layer, one class per table
-    │   ├── ProductRepository.php
-    │   ├── CustomerRepository.php
-    │   ├── InvoiceRepository.php
-    │   ├── PaymentRepository.php
-    │   └── StockLogRepository.php
-    ├── Services/                 # business logic
-    │   ├── InvoiceService.php    # create invoice, recalc totals, update stock
-    │   ├── StockService.php
-    │   ├── NumberingService.php  # atomic invoice numbering
-    │   └── PdfService.php        # dompdf wrapper
-    └── Api/                      # REST controllers
-        ├── ProductsController.php
-        ├── CustomersController.php
-        ├── InvoicesController.php
-        ├── PaymentsController.php
-        └── ReportsController.php
+    │   └── ProductsModule.php   # registers all admin pages (to be renamed AdminModule)
+    ├── Admin/
+    │   ├── AdminPage.php        # abstract base
+    │   ├── AdminMenu.php
+    │   └── ProductsPage, CategoriesPage, CustomersPage, PosPage,
+    │       SalesListPage, DueCollectionPage, CashbookPage, SettingsPage
+    ├── DB/                      # $wpdb query layer
+    │   └── Product, Category, Customer, Invoice, Cashbook, Payment repositories
+    └── Services/                # business logic
+        └── NumberingService, StockService, InvoiceService,
+            ReturnService, PaymentService, SettingsService
 ```
 
-New folders/files are added only when the feature that needs them is actually being built — no empty scaffolding ahead of time.
+New folders and files are added only when the feature that needs them is being built.
 
 ---
 
 ## Database Schema
 
-All tables prefixed `{$wpdb->prefix}billnest_`. InnoDB required on every table (transaction support).
+All tables prefixed `{$wpdb->prefix}billnest_`, InnoDB. Integrity is enforced in PHP, not with foreign keys. Status columns are VARCHAR validated in PHP.
 
 | Table | Purpose |
 |---|---|
-| `products` | code, name, category, unit, prices, stock_qty, reorder_level, status |
-| `categories` | product categories, self-referencing parent_id |
-| `customers` | name, contact, opening_balance, current_due |
-| `invoices` | invoice_no, customer_id, totals, discount, status |
-| `invoice_items` | line items per invoice |
-| `payments` | payments against invoices/customers, for due collection history |
-| `stock_log` | append-only ledger of every stock change — source of truth for `products.stock_qty` |
-| `purchases` / `purchase_items` | supplier stock-in, mirrors invoices structure |
-| `suppliers` | supplier records |
-| `cashbook` | auto-populated cash in/out ledger |
+| `products` | code (unique), name, category, model, unit, purchase/sale price, stock_qty, reorder_level, image_url, status |
+| `categories` | product categories with parent_id |
+| `customers` | contact, opening_balance, current_due, status |
 | `counters` | atomic sequence generator for invoice numbering |
-| `settings` | business info, currency, invoice format, tax — stored as one serialized option |
+| `invoices` | invoice_no, customer, subtotal, discount type/value/amount, total, received, due, status |
+| `invoice_items` | line items per invoice |
+| `stock_log` | append-only ledger of every stock change (sale, sales_return, adjustment) |
+| `cashbook` | cash in/out ledger (sale, sales_return, payment, manual) |
+| `payments` | customer-level due collections |
+
+Options: `billnest_settings` (business info and currency) and `billnest_db_version`.
+
+Planned tables: `invoice_payments` (split payments), `suppliers`, `purchases`, `purchase_items`, `card_offers`.
+
+`dbDelta()` runs on activation only, so after a schema change deactivate and activate the plugin.
 
 ---
 
@@ -141,60 +142,75 @@ Base: `/wp-json/billnest/v1/`
 | POST | `/payments` | Record due collection payment |
 | GET | `/reports/sales-summary?range=` | Dashboard data |
 
-All write routes require `current_user_can('manage_billnest')` and nonce verification.
+All write routes require `current_user_can('manage_billnest')`, a nonce, and a `permission_callback`. List endpoints support `page` and `per_page`.
 
 ---
 
 ## Feature Roadmap
 
-### Phase 1 — Foundation ✅ (in progress)
-- [x] Plugin bootstrap, constants, activation/deactivation hooks
-- [x] Composer PSR-4 autoloading
-- [x] `products` table via `dbDelta()`
-- [x] `manage_billnest` capability
-- [x] Module/Loader architecture
-- [x] Admin menu skeleton (BillNest → Products)
-- [ ] Settings page (business info, currency, invoice format)
-- [ ] Remaining core tables (categories, customers, invoices, invoice_items, payments, stock_log, cashbook, counters)
+### Phase 1: Foundation (done)
+- [x] Bootstrap, constants, activation/deactivation hooks, Composer PSR-4
+- [x] Module/Loader architecture, admin menu
+- [x] All core tables, `manage_billnest` capability
+- [x] Settings page and currency formatting
 
-### Phase 2 — Master Data
-- [ ] Product CRUD + categories (repository → service → admin page → REST)
-- [ ] Customer CRUD, opening balance, due tracking
+### Phase 2: Master Data (done)
+- [x] Product CRUD with categories, extended product fields, low-stock badge
+- [x] Customer CRUD, opening balance, due tracking
 
-### Phase 3 — Core POS
-- [ ] POS/Sales Invoice screen — customer search, product quick-add, live totals
-- [ ] Transaction-safe invoice save (invoice + items + stock_log + cashbook, atomic)
-- [ ] Atomic invoice numbering service
-- [ ] Sales list — filter, view, print
+### Phase 3: Core POS (mostly done)
+- [x] POS with multi-item sales and live totals
+- [x] Flat and percent discount
+- [x] Transaction-safe invoice save, atomic numbering
+- [x] Sales list, invoice detail, print
+- [ ] Discount line on the invoice detail page
+- [ ] Sales list filters and pagination
+- [ ] Customer and product search
+- [ ] "Allow negative stock" setting and stock check at sale
 
-### Phase 4 — Money Flow
-- [ ] Due collection screen
-- [ ] Cashbook view
-- [ ] Payment recording
+### Phase 4: Money Flow (done)
+- [x] Due collection with FIFO allocation
+- [x] Cashbook with automatic and manual entries
+- [ ] Split payments (cash, card, mobile) with `invoice_payments`
+- [ ] Non-cash receipts kept separate from the cash drawer
 
-### Phase 5 — Returns & Purchases
-- [ ] Sales return (reverse stock, adjust due)
-- [ ] Purchase module — supplier, purchase invoice, stock-in
+### Phase 5: Returns and Purchases
+- [x] Sales return, whole invoice
+- [ ] Partial (item-wise) return
+- [ ] Purchase module: suppliers, purchase invoices, stock-in
+- [ ] Card offers (discount rules per bank/card)
 
-### Phase 6 — Reports & Polish
+### Phase 6: Reports and Polish
 - [ ] Dashboard with Chart.js
-- [ ] PDF invoice export (dompdf)
-- [ ] Sales / profit / stock / due reports
+- [ ] PDF invoice (dompdf)
+- [ ] Sales, profit, stock and due reports
+- [ ] Roles (cashier vs admin)
+- [ ] REST API
 
-### Phase 7 — Resale Readiness
-- [ ] `readme.txt` finalized, all strings translation-ready
+### Phase 7: Resale Readiness
+- [ ] `readme.txt` finalized, all strings translation-ready, `.pot` file
+- [ ] `uninstall.php` with confirmed table drop
 - [ ] No hardcoded business references
-- [ ] License/activation system (Freemius or custom) if sold externally
-- [ ] Cross-version testing (PHP/WP)
-- [ ] `uninstall.php` — confirmed table drop
+- [ ] License/activation system if sold externally
+- [ ] PHP/WP version testing, bundled `vendor/` for release builds
+
+---
+
+## Known Gaps
+
+- A walk-in sale with a due has no customer to collect from.
+- Stock can currently go negative (no check at sale yet).
+- Opening-balance payments are not tracked separately from invoice dues.
+- No invoice edit or cancel, and no pagination on lists.
+- Returned invoices still show their original Received and Due figures.
 
 ---
 
 ## Development Process
 
-This plugin is being built incrementally, one function/page at a time, rather than scaffolded all at once — each piece is written, tested locally, and confirmed working before the next is added. This keeps the codebase lean and avoids the loose, hard-to-maintain sprawl that comes from generating a large file/folder structure upfront.
+The plugin is built incrementally, one function or page at a time. Each piece is written, tested locally and confirmed before the next one is added. This keeps the codebase lean.
 
-Local testing: WAMP, activate/deactivate cycle after every structural change, `wp-content/debug.log` checked for silently-caught module errors (the `Loader` catches and logs `Throwable` per module rather than crashing the whole plugin).
+Local testing: WAMP, deactivate and activate after structural changes, and check `wp-content/debug.log` for errors the `Loader` has caught per module.
 
 ---
 
@@ -206,11 +222,14 @@ cd billnest
 composer install
 ```
 
-Activate through WP Admin → Plugins → BillNest.
+Activate through WP Admin, Plugins, BillNest.
 
 ---
 
 ## Changelog
 
 ### 1.0.0 (in development)
-- Plugin bootstrap, PSR-4 architecture, products table, admin menu foundation
+- Plugin bootstrap, PSR-4 architecture, admin menu
+- Products, categories, customers
+- POS with discount, invoices, sales list, print
+- Sales return, due collection, cashbook, settings
