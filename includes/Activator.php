@@ -44,6 +44,8 @@ class Activator
         self::create_stock_log_table($charset_collate);
         self::create_cashbook_table($charset_collate);
         self::create_payments_table($charset_collate);
+        self::create_payments_table($charset_collate);
+        self::create_invoice_payments_table($charset_collate);
     }
 
     private static function create_customers_table($charset_collate)
@@ -258,6 +260,29 @@ class Activator
         PRIMARY KEY  (id),
         KEY customer_id (customer_id),
         KEY invoice_id (invoice_id)
+    ) $charset_collate ENGINE=InnoDB;";
+
+        dbDelta($sql);
+    }
+
+
+    // Create the invoice payments table with the specified schema
+    private static function create_invoice_payments_table($charset_collate)
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'billnest_invoice_payments';
+
+        $sql = "CREATE TABLE $table_name (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        invoice_id BIGINT UNSIGNED NOT NULL,
+        method VARCHAR(30) NOT NULL DEFAULT 'cash',
+        amount DECIMAL(12,2) NOT NULL,
+        reference VARCHAR(100) DEFAULT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY  (id),
+        KEY invoice_id (invoice_id),
+        KEY method (method)
     ) $charset_collate ENGINE=InnoDB;";
 
         dbDelta($sql);
