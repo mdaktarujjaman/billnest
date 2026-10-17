@@ -5,6 +5,7 @@ namespace BillNest\Admin;
 use BillNest\DB\CustomerRepository;
 use BillNest\DB\ProductRepository;
 use BillNest\Services\InvoiceService;
+use BillNest\Services\PaymentMethods;
 use BillNest\Services\SettingsService;
 
 if (! defined('ABSPATH')) {
@@ -40,7 +41,7 @@ class PosPage extends AdminPage
             wp_die(esc_html__('You do not have permission to access this page.', 'billnest'));
         }
 
-        $message = $this->handle_form_submission();
+        $result = $this->handle_form_submission();
 
         $customers = (new CustomerRepository())->get_all();
         $products  = (new ProductRepository())->get_all();
@@ -49,8 +50,9 @@ class PosPage extends AdminPage
         echo '<div class="wrap">';
         echo '<h1>' . esc_html($this->get_title()) . '</h1>';
 
-        if ($message) {
-            echo '<div class="notice notice-success"><p>' . esc_html($message) . '</p></div>';
+        if ($result) {
+            $class = $result['type'] === 'success' ? 'notice-success' : 'notice-error';
+            echo '<div class="notice ' . esc_attr($class) . '"><p>' . esc_html($result['message']) . '</p></div>';
         }
 
         $this->render_form($customers, $products, $settings);
@@ -97,11 +99,11 @@ class PosPage extends AdminPage
         echo '<div class="billnest-row"><span>' . esc_html__('Subtotal', 'billnest') . '</span><span>' . ($before ? $symbol : '') . '<span id="billnest-subtotal">0.00</span>' . ($before ? '' : $symbol) . '</span></div>';
         echo '<div class="billnest-row"><span>' . esc_html__('Discount', 'billnest') . '</span><span>-' . ($before ? $symbol : '') . '<span id="billnest-discount-display">0.00</span>' . ($before ? '' : $symbol) . '</span></div>';
         echo '<div class="billnest-row billnest-total-row"><span>' . esc_html__('Total', 'billnest') . '</span><span>' . ($before ? $symbol : '') . '<span id="billnest-total-display">0.00</span>' . ($before ? '' : $symbol) . '</span></div>';
+        echo '<div class="billnest-row"><span>' . esc_html__('Paid', 'billnest') . '</span><span>' . ($before ? $symbol : '') . '<span id="billnest-paid-display">0.00</span>' . ($before ? '' : $symbol) . '</span></div>';
         echo '<div class="billnest-row billnest-balance-row billnest-change" id="billnest-balance-row"><span id="billnest-balance-label">' . esc_html__('Change to Return', 'billnest') . '</span><span>' . ($before ? $symbol : '') . '<span id="billnest-balance-amount">0.00</span>' . ($before ? '' : $symbol) . '</span></div>';
         echo '</div>';
 
         echo '<table class="form-table">';
-
         echo '<tr><th><label for="discount_type">' . esc_html__('Discount', 'billnest') . '</label></th>';
         echo '<td><select name="discount_type" id="discount_type">';
         echo '<option value="">' . esc_html__('None', 'billnest') . '</option>';
@@ -109,10 +111,24 @@ class PosPage extends AdminPage
         echo '<option value="percent">' . esc_html__('Percent (%)', 'billnest') . '</option>';
         echo '</select> ';
         echo '<input type="number" step="0.01" min="0" name="discount_value" id="discount_value" value="0" disabled></td></tr>';
-
-        echo '<tr><th><label for="received_amount">' . esc_html__('Received Amount', 'billnest') . '</label></th>';
-        echo '<td><input type="number" step="0.01" min="0" name="received_amount" id="received_amount" value="0" required></td></tr>';
         echo '</table>';
+
+        echo '<h3>' . esc_html__('Payments', 'billnest') . '</h3>';
+        echo '<table class="wp-list-table widefat fixed striped" id="billnest-payments-table">';
+        echo '<thead><tr>';
+        echo '<th style="width:160px;">' . esc_html__('Method', 'billnest') . '</th>';
+        echo '<th style="width:140px;">' . esc_html__('Amount', 'billnest') . '</th>';
+        echo '<th>' . esc_html__('Reference (trx ID / approval code)', 'billnest') . '</th>';
+        echo '<th style="width:50px;"></th>';
+        echo '</tr></thead>';
+        echo '<tbody id="billnest-payments-body"></tbody>';
+        echo '</table>';
+
+        echo '<button type="button" class="button" id="billnest-add-payment">' . esc_html__('+ Add Payment', 'billnest') . '</button>';
+
+        echo '<div class="notice notice-warning inline" id="billnest-pay-warning" style="display:none;"><p>'
+            . esc_html__('Card and mobile payments cannot be more than the invoice total.', 'billnest')
+            . '</p></div>';
 
         submit_button(__('Save Invoice', 'billnest'));
         echo '</form>';
@@ -135,19 +151,30 @@ class PosPage extends AdminPage
         <script>
             (function() {
                 var products = <?php echo wp_json_encode($product_data); ?>;
+                var methods = <?php echo wp_json_encode(PaymentMethods::all()); ?>;
                 var currencySymbol = <?php echo wp_json_encode($settings->get('currency_symbol')); ?>;
                 var currencyBefore = <?php echo wp_json_encode($settings->get('currency_position') !== 'after'); ?>;
                 var body = document.getElementById('billnest-items-body');
-                var receivedInput = document.getElementById('received_amount');
+                var payBody = document.getElementById('billnest-payments-body');
                 var discountType = document.getElementById('discount_type');
                 var discountValue = document.getElementById('discount_value');
+                var submitBtn = document.querySelector('#billnest-pos-form input[type="submit"]');
                 var subtotal = 0;
                 var rowIndex = 0;
+                var payIndex = 0;
 
                 function buildOptions() {
                     var html = '';
                     products.forEach(function(p) {
                         html += '<option value="' + p.id + '" data-price="' + p.price + '">' + p.name + ' — ' + p.price + '</option>';
+                    });
+                    return html;
+                }
+
+                function methodOptions() {
+                    var html = '';
+                    Object.keys(methods).forEach(function(key) {
+                        html += '<option value="' + key + '">' + methods[key] + '</option>';
                     });
                     return html;
                 }
@@ -168,23 +195,44 @@ class PosPage extends AdminPage
                     return 0;
                 }
 
-                function updateBalance() {
+                function updatePayments() {
                     var total = parseFloat(document.getElementById('billnest-total-display').textContent) || 0;
-                    var received = parseFloat(receivedInput.value) || 0;
-                    var diff = received - total;
+                    var cash = 0;
+                    var nonCash = 0;
+
+                    payBody.querySelectorAll('tr').forEach(function(row) {
+                        var method = row.querySelector('.billnest-pay-method').value;
+                        var amount = Math.max(0, parseFloat(row.querySelector('.billnest-pay-amount').value) || 0);
+
+                        if (method === 'cash') {
+                            cash += amount;
+                        } else {
+                            nonCash += amount;
+                        }
+                    });
+
+                    var over = nonCash > total + 0.005;
+                    var cashKept = Math.min(cash, Math.max(0, total - nonCash));
+                    var paid = cashKept + nonCash;
+                    var due = Math.round((total - paid) * 100) / 100;
+                    var change = Math.round((cash - cashKept) * 100) / 100;
 
                     var row = document.getElementById('billnest-balance-row');
                     var label = document.getElementById('billnest-balance-label');
                     var amount = document.getElementById('billnest-balance-amount');
 
-                    if (diff >= 0) {
-                        row.className = 'billnest-row billnest-balance-row billnest-change';
-                        label.textContent = 'Change to Return';
-                        amount.textContent = diff.toFixed(2);
-                    } else {
+                    document.getElementById('billnest-paid-display').textContent = paid.toFixed(2);
+                    document.getElementById('billnest-pay-warning').style.display = over ? '' : 'none';
+                    submitBtn.disabled = over;
+
+                    if (due > 0) {
                         row.className = 'billnest-row billnest-balance-row billnest-due';
                         label.textContent = 'Due Amount';
-                        amount.textContent = Math.abs(diff).toFixed(2);
+                        amount.textContent = due.toFixed(2);
+                    } else {
+                        row.className = 'billnest-row billnest-balance-row billnest-change';
+                        label.textContent = 'Change to Return';
+                        amount.textContent = change.toFixed(2);
                     }
                 }
 
@@ -195,7 +243,7 @@ class PosPage extends AdminPage
                     document.getElementById('billnest-subtotal').textContent = subtotal.toFixed(2);
                     document.getElementById('billnest-discount-display').textContent = discount.toFixed(2);
                     document.getElementById('billnest-total-display').textContent = total.toFixed(2);
-                    updateBalance();
+                    updatePayments();
                 }
 
                 function recalcSubtotal() {
@@ -240,6 +288,43 @@ class PosPage extends AdminPage
                     recalcRow(row);
                 }
 
+                function syncReference(row) {
+                    var isCash = row.querySelector('.billnest-pay-method').value === 'cash';
+                    var reference = row.querySelector('.billnest-pay-reference');
+
+                    reference.disabled = isCash;
+                    reference.required = !isCash;
+
+                    if (isCash) {
+                        reference.value = '';
+                    }
+                }
+
+                function addPayment() {
+                    var index = payIndex++;
+                    var row = document.createElement('tr');
+                    row.innerHTML =
+                        '<td><select name="payments[' + index + '][method]" class="billnest-pay-method">' + methodOptions() + '</select></td>' +
+                        '<td><input type="number" step="0.01" min="0" value="0" name="payments[' + index + '][amount]" class="billnest-pay-amount"></td>' +
+                        '<td><input type="text" maxlength="100" name="payments[' + index + '][reference]" class="billnest-pay-reference"></td>' +
+                        '<td><button type="button" class="button billnest-remove-pay">&times;</button></td>';
+
+                    payBody.appendChild(row);
+
+                    row.querySelector('.billnest-pay-method').addEventListener('change', function() {
+                        syncReference(row);
+                        updatePayments();
+                    });
+                    row.querySelector('.billnest-pay-amount').addEventListener('input', updatePayments);
+                    row.querySelector('.billnest-remove-pay').addEventListener('click', function() {
+                        row.remove();
+                        updatePayments();
+                    });
+
+                    syncReference(row);
+                    updatePayments();
+                }
+
                 discountType.addEventListener('change', function() {
                     var hasDiscount = discountType.value !== '';
                     discountValue.disabled = !hasDiscount;
@@ -249,16 +334,36 @@ class PosPage extends AdminPage
                     updateTotals();
                 });
                 discountValue.addEventListener('input', updateTotals);
-                receivedInput.addEventListener('input', updateBalance);
                 document.getElementById('billnest-add-item').addEventListener('click', addRow);
+                document.getElementById('billnest-add-payment').addEventListener('click', addPayment);
 
                 addRow();
+                addPayment();
             })();
         </script>
 <?php
     }
 
-    private function handle_form_submission(): ?string
+    private function read_payment_lines(): array
+    {
+        $lines = [];
+
+        foreach ((array) ($_POST['payments'] ?? []) as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+
+            $lines[] = [
+                'method'    => sanitize_key(wp_unslash($line['method'] ?? '')),
+                'amount'    => floatval($line['amount'] ?? 0),
+                'reference' => sanitize_text_field(wp_unslash($line['reference'] ?? '')),
+            ];
+        }
+
+        return $lines;
+    }
+
+    private function handle_form_submission(): ?array
     {
         if (! isset($_POST['billnest_invoice_nonce'])) {
             return null;
@@ -316,16 +421,31 @@ class PosPage extends AdminPage
 
         $service = new InvoiceService();
 
-        $invoice_id = $service->create_invoice([
-            'customer_id'     => absint($_POST['customer_id'] ?? 0) ?: null,
-            'discount_type'   => $discount_type,
-            'discount_value'  => $discount_value,
-            'received_amount' => floatval($_POST['received_amount'] ?? 0),
-            'remarks'         => '',
-            'created_by'      => get_current_user_id(),
-            'items'           => $items,
-        ]);
+        try {
+            $invoice_id = $service->create_invoice([
+                'customer_id'     => absint($_POST['customer_id'] ?? 0) ?: null,
+                'discount_type'   => $discount_type,
+                'discount_value'  => $discount_value,
+                'payments'        => $this->read_payment_lines(),
+                'received_amount' => 0,
+                'remarks'         => '',
+                'created_by'      => get_current_user_id(),
+                'items'           => $items,
+            ]);
+        } catch (\InvalidArgumentException $e) {
+            return ['type' => 'error', 'message' => $e->getMessage()];
+        } catch (\Throwable $e) {
+            error_log('BillNest invoice save failed: ' . $e->getMessage());
 
-        return sprintf(__('Invoice #%d created successfully.', 'billnest'), $invoice_id);
+            return [
+                'type'    => 'error',
+                'message' => __('Could not save the invoice. Please check the debug log.', 'billnest'),
+            ];
+        }
+
+        return [
+            'type'    => 'success',
+            'message' => sprintf(__('Invoice #%d created successfully.', 'billnest'), $invoice_id),
+        ];
     }
 }
