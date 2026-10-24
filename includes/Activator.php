@@ -6,7 +6,6 @@ if (! defined('ABSPATH')) {
     exit;
 }
 
-
 // This class handles the activation of the plugin, including creating necessary database tables and setting up initial options.
 class Activator
 {
@@ -44,8 +43,8 @@ class Activator
         self::create_stock_log_table($charset_collate);
         self::create_cashbook_table($charset_collate);
         self::create_payments_table($charset_collate);
-        self::create_payments_table($charset_collate);
         self::create_invoice_payments_table($charset_collate);
+        self::create_discount_rules_table($charset_collate);
     }
 
     private static function create_customers_table($charset_collate)
@@ -265,7 +264,6 @@ class Activator
         dbDelta($sql);
     }
 
-
     // Create the invoice payments table with the specified schema
     private static function create_invoice_payments_table($charset_collate)
     {
@@ -283,6 +281,32 @@ class Activator
         PRIMARY KEY  (id),
         KEY invoice_id (invoice_id),
         KEY method (method)
+    ) $charset_collate ENGINE=InnoDB;";
+
+        dbDelta($sql);
+    }
+
+    // Create the discount rules table with the specified schema
+    private static function create_discount_rules_table($charset_collate)
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'billnest_discount_rules';
+
+        $sql = "CREATE TABLE $table_name (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        method VARCHAR(30) NOT NULL,
+        type VARCHAR(10) NOT NULL DEFAULT 'percent',
+        value DECIMAL(12,2) NOT NULL DEFAULT 0,
+        max_discount DECIMAL(12,2) DEFAULT NULL,
+        min_order DECIMAL(12,2) NOT NULL DEFAULT 0,
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'active',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY  (id),
+        KEY method_status (method, status),
+        KEY dates (start_date, end_date)
     ) $charset_collate ENGINE=InnoDB;";
 
         dbDelta($sql);
