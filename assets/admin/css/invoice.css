@@ -221,3 +221,20 @@
     color: #b32d2e;
     font-weight: 600;
 }
+
+.billnest-invoice-payments {
+    margin-top: 24px;
+}
+
+.billnest-invoice-payments h3 {
+    margin: 0 0 8px;
+    font-size: 13px;
+    color: #50575e;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+.billnest-refund-text {
+    color: #b32d2e;
+    font-weight: 600;
+}

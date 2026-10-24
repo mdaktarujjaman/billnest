@@ -3,7 +3,9 @@
 namespace BillNest\Admin;
 
 use BillNest\DB\CustomerRepository;
+use BillNest\DB\InvoicePaymentRepository;
 use BillNest\DB\InvoiceRepository;
+use BillNest\Services\PaymentMethods;
 use BillNest\Services\ReturnService;
 use BillNest\Services\SettingsService;
 
@@ -143,6 +145,7 @@ class SalesListPage extends AdminPage
         }
 
         $items         = $repository->get_items($invoice_id);
+        $payments      = (new InvoicePaymentRepository())->get_by_invoice($invoice_id);
         $customer      = $invoice->customer_id ? (new CustomerRepository())->get_by_id((int) $invoice->customer_id) : null;
         $customer_name = $customer ? $customer->name : __('Walk-in Customer', 'billnest');
         $settings      = new SettingsService();
@@ -223,11 +226,42 @@ class SalesListPage extends AdminPage
         echo '<div class="billnest-summary-row billnest-summary-due"><span>' . esc_html__('Due', 'billnest') . '</span><span>' . esc_html($settings->format_amount((float) $invoice->due_amount)) . '</span></div>';
         echo '</div>';
 
+        if (! empty($payments)) {
+            $this->render_payments($payments, $settings);
+        }
+
         if (! empty($invoice->remarks)) {
             echo '<p class="billnest-invoice-remarks"><strong>' . esc_html__('Remarks:', 'billnest') . '</strong> ' . esc_html($invoice->remarks) . '</p>';
         }
 
         echo '</div>';
+        echo '</div>';
+    }
+
+    private function render_payments(array $payments, SettingsService $settings): void
+    {
+        echo '<div class="billnest-invoice-payments">';
+        echo '<h3>' . esc_html__('Payments', 'billnest') . '</h3>';
+        echo '<table class="billnest-invoice-items">';
+        echo '<thead><tr>';
+        echo '<th>' . esc_html__('Method', 'billnest') . '</th>';
+        echo '<th>' . esc_html__('Reference', 'billnest') . '</th>';
+        echo '<th class="billnest-num">' . esc_html__('Amount', 'billnest') . '</th>';
+        echo '</tr></thead><tbody>';
+
+        foreach ($payments as $payment) {
+            $amount    = (float) $payment->amount;
+            $is_refund = $amount < 0;
+            $display   = ($is_refund ? '-' : '') . $settings->format_amount(abs($amount));
+
+            echo '<tr>';
+            echo '<td>' . esc_html(PaymentMethods::label((string) $payment->method)) . '</td>';
+            echo '<td>' . esc_html($payment->reference ?: '—') . '</td>';
+            echo '<td class="billnest-num' . ($is_refund ? ' billnest-refund-text' : '') . '">' . esc_html($display) . '</td>';
+            echo '</tr>';
+        }
+
+        echo '</tbody></table>';
         echo '</div>';
     }
 }
