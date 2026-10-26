@@ -79,22 +79,23 @@ class InvoiceRepository
         $wpdb->insert(
             $this->table,
             [
-                'invoice_no'      => $data['invoice_no'],
-                'customer_id'     => $data['customer_id'] ?: null,
-                'invoice_date'    => $data['invoice_date'],
-                'subtotal'        => $data['subtotal'],
-                'discount_type'   => $data['discount_type'],
-                'discount_value'  => $data['discount_value'],
-                'discount_amount' => $data['discount_amount'],
-                'total'           => $data['total'],
-                'received_amount' => $data['received_amount'],
-                'due_amount'      => $data['due_amount'],
-                'remarks'         => $data['remarks'],
-                'status'          => 'completed',
-                'created_by'      => $data['created_by'],
-                'created_at'      => current_time('mysql'),
+                'invoice_no'       => $data['invoice_no'],
+                'customer_id'      => $data['customer_id'] ?: null,
+                'invoice_date'     => $data['invoice_date'],
+                'subtotal'         => $data['subtotal'],
+                'discount_type'    => $data['discount_type'],
+                'discount_value'   => $data['discount_value'],
+                'discount_amount'  => $data['discount_amount'],
+                'discount_rule_id' => $data['discount_rule_id'] ?? null,
+                'total'            => $data['total'],
+                'received_amount'  => $data['received_amount'],
+                'due_amount'       => $data['due_amount'],
+                'remarks'          => $data['remarks'],
+                'status'           => 'completed',
+                'created_by'       => $data['created_by'],
+                'created_at'       => current_time('mysql'),
             ],
-            ['%s', '%d', '%s', '%f', '%s', '%f', '%f', '%f', '%f', '%f', '%s', '%s', '%d', '%s']
+            ['%s', '%d', '%s', '%f', '%s', '%f', '%f', '%d', '%f', '%f', '%f', '%s', '%s', '%d', '%s']
         );
 
         return $wpdb->insert_id;

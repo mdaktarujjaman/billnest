@@ -19,6 +19,7 @@ class InvoiceService
     private InvoicePaymentRepository $payments;
     private NumberingService $numbering;
     private StockService $stock;
+    private DiscountRuleService $rules;
 
     public function __construct()
     {
@@ -27,6 +28,7 @@ class InvoiceService
         $this->payments  = new InvoicePaymentRepository();
         $this->numbering = new NumberingService();
         $this->stock     = new StockService();
+        $this->rules     = new DiscountRuleService();
     }
 
     public function create_invoice(array $data): int
@@ -38,12 +40,29 @@ class InvoiceService
             $subtotal += $item['qty'] * $item['unit_price'];
         }
 
-        $discount_amount = $this->calculate_discount($subtotal, $data['discount_type'], $data['discount_value']);
-        $total           = $subtotal - $discount_amount;
-        $payments        = $this->prepare_payments($data, $total);
-        $received        = round(array_sum(array_column($payments, 'amount')), 2);
-        $cash_received   = $this->sum_by_method($payments, 'cash');
-        $due_amount      = round($total - $received, 2);
+        $discount_type   = $data['discount_type'];
+        $discount_value  = $data['discount_value'];
+        $discount_amount = $this->calculate_discount($subtotal, $discount_type, $discount_value);
+        $rule_id         = null;
+        $lines           = $this->payment_lines($data);
+
+        if ($discount_amount <= 0) {
+            $rule = $this->find_rule($subtotal, $lines);
+
+            if ($rule !== null) {
+                $lines           = $this->fit_to_payable($lines, $subtotal, $rule['amount']);
+                $discount_type   = 'rule';
+                $discount_value  = $rule['value'];
+                $discount_amount = $rule['amount'];
+                $rule_id         = $rule['rule_id'];
+            }
+        }
+
+        $total         = $subtotal - $discount_amount;
+        $payments      = $this->prepare_payments($lines, $total);
+        $received      = round(array_sum(array_column($payments, 'amount')), 2);
+        $cash_received = $this->sum_by_method($payments, 'cash');
+        $due_amount    = round($total - $received, 2);
 
         $wpdb->query('START TRANSACTION');
 
@@ -51,18 +70,19 @@ class InvoiceService
             $invoice_no = $this->numbering->get_next_invoice_number();
 
             $invoice_id = $this->invoices->create_invoice([
-                'invoice_no'      => $invoice_no,
-                'customer_id'     => $data['customer_id'],
-                'invoice_date'    => current_time('Y-m-d'),
-                'subtotal'        => $subtotal,
-                'discount_type'   => $data['discount_type'],
-                'discount_value'  => $data['discount_value'],
-                'discount_amount' => $discount_amount,
-                'total'           => $total,
-                'received_amount' => $received,
-                'due_amount'      => $due_amount,
-                'remarks'         => $data['remarks'],
-                'created_by'      => $data['created_by'],
+                'invoice_no'       => $invoice_no,
+                'customer_id'      => $data['customer_id'],
+                'invoice_date'     => current_time('Y-m-d'),
+                'subtotal'         => $subtotal,
+                'discount_type'    => $discount_type,
+                'discount_value'   => $discount_value,
+                'discount_amount'  => $discount_amount,
+                'discount_rule_id' => $rule_id,
+                'total'            => $total,
+                'received_amount'  => $received,
+                'due_amount'       => $due_amount,
+                'remarks'          => $data['remarks'],
+                'created_by'       => $data['created_by'],
             ]);
 
             foreach ($data['items'] as $item) {
@@ -106,18 +126,62 @@ class InvoiceService
         }
     }
 
-    private function prepare_payments(array $data, float $total): array
+    private function payment_lines(array $data): array
     {
         $lines = $data['payments'] ?? [];
 
         if (empty($lines) && (float) ($data['received_amount'] ?? 0) > 0) {
-            $lines = [[
+            return [[
                 'method'    => 'cash',
                 'amount'    => $data['received_amount'],
                 'reference' => null,
             ]];
         }
 
+        return array_values($lines);
+    }
+
+    private function find_rule(float $subtotal, array $lines): ?array
+    {
+        try {
+            return $this->rules->calculate($subtotal, $lines);
+        } catch (\Throwable $e) {
+            error_log('BillNest discount rule lookup failed: ' . $e->getMessage());
+
+            return null;
+        }
+    }
+
+    private function fit_to_payable(array $lines, float $subtotal, float $discount): array
+    {
+        $paid = 0.0;
+        foreach ($lines as $line) {
+            $paid += max(0, round((float) ($line['amount'] ?? 0), 2));
+        }
+
+        if ($paid > round($subtotal, 2)) {
+            throw new \InvalidArgumentException('Non-cash payments cannot exceed the invoice total.');
+        }
+
+        $excess = round($paid - ($subtotal - $discount), 2);
+
+        for ($i = count($lines) - 1; $i >= 0 && $excess > 0; $i--) {
+            $amount = round((float) ($lines[$i]['amount'] ?? 0), 2);
+
+            if ($amount <= 0) {
+                continue;
+            }
+
+            $cut                 = min($amount, $excess);
+            $lines[$i]['amount'] = round($amount - $cut, 2);
+            $excess              = round($excess - $cut, 2);
+        }
+
+        return $lines;
+    }
+
+    private function prepare_payments(array $lines, float $total): array
+    {
         $cash_total = 0.0;
         $non_cash   = [];
 

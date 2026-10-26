@@ -156,6 +156,7 @@ class Activator
         discount_type VARCHAR(10) DEFAULT NULL,
         discount_value DECIMAL(12,2) NOT NULL DEFAULT 0,
         discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+        discount_rule_id BIGINT UNSIGNED DEFAULT NULL,
         total DECIMAL(12,2) NOT NULL DEFAULT 0,
         received_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
         due_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
