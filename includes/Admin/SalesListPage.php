@@ -218,7 +218,11 @@ class SalesListPage extends AdminPage
         echo '<div class="billnest-summary-row"><span>' . esc_html__('Subtotal', 'billnest') . '</span><span>' . esc_html($settings->format_amount((float) $invoice->subtotal)) . '</span></div>';
 
         if ((float) $invoice->discount_amount > 0) {
-            echo '<div class="billnest-summary-row"><span>' . esc_html__('Discount', 'billnest') . '</span><span>-' . esc_html($settings->format_amount((float) $invoice->discount_amount)) . '</span></div>';
+            $discount_label = $invoice->discount_type === 'rule'
+                ? __('Online payment discount', 'billnest')
+                : __('Discount', 'billnest');
+
+            echo '<div class="billnest-summary-row"><span>' . esc_html($discount_label) . '</span><span>-' . esc_html($settings->format_amount((float) $invoice->discount_amount)) . '</span></div>';
         }
 
         echo '<div class="billnest-summary-row billnest-summary-total"><span>' . esc_html__('Total', 'billnest') . '</span><span>' . esc_html($settings->format_amount((float) $invoice->total)) . '</span></div>';

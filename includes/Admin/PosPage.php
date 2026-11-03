@@ -3,6 +3,7 @@
 namespace BillNest\Admin;
 
 use BillNest\DB\CustomerRepository;
+use BillNest\DB\DiscountRuleRepository;
 use BillNest\DB\ProductRepository;
 use BillNest\Services\InvoiceService;
 use BillNest\Services\PaymentMethods;
@@ -97,7 +98,7 @@ class PosPage extends AdminPage
 
         echo '<div class="billnest-totals-box">';
         echo '<div class="billnest-row"><span>' . esc_html__('Subtotal', 'billnest') . '</span><span>' . ($before ? $symbol : '') . '<span id="billnest-subtotal">0.00</span>' . ($before ? '' : $symbol) . '</span></div>';
-        echo '<div class="billnest-row"><span>' . esc_html__('Discount', 'billnest') . '</span><span>-' . ($before ? $symbol : '') . '<span id="billnest-discount-display">0.00</span>' . ($before ? '' : $symbol) . '</span></div>';
+        echo '<div class="billnest-row"><span id="billnest-discount-label">' . esc_html__('Discount', 'billnest') . '</span><span>-' . ($before ? $symbol : '') . '<span id="billnest-discount-display">0.00</span>' . ($before ? '' : $symbol) . '</span></div>';
         echo '<div class="billnest-row billnest-total-row"><span>' . esc_html__('Total', 'billnest') . '</span><span>' . ($before ? $symbol : '') . '<span id="billnest-total-display">0.00</span>' . ($before ? '' : $symbol) . '</span></div>';
         echo '<div class="billnest-row"><span>' . esc_html__('Paid', 'billnest') . '</span><span>' . ($before ? $symbol : '') . '<span id="billnest-paid-display">0.00</span>' . ($before ? '' : $symbol) . '</span></div>';
         echo '<div class="billnest-row billnest-balance-row billnest-change" id="billnest-balance-row"><span id="billnest-balance-label">' . esc_html__('Change to Return', 'billnest') . '</span><span>' . ($before ? $symbol : '') . '<span id="billnest-balance-amount">0.00</span>' . ($before ? '' : $symbol) . '</span></div>';
@@ -136,6 +137,33 @@ class PosPage extends AdminPage
         echo '</div>';
     }
 
+    private function active_rule_data(): array
+    {
+        $data = [];
+
+        try {
+            $today = wp_date('Y-m-d');
+
+            foreach ((new DiscountRuleRepository())->all() as $rule) {
+                if ($rule['status'] !== 'active' || $rule['start_date'] > $today || $rule['end_date'] < $today) {
+                    continue;
+                }
+
+                $data[] = [
+                    'method'       => $rule['method'],
+                    'type'         => $rule['type'],
+                    'value'        => (float) $rule['value'],
+                    'max_discount' => $rule['max_discount'] === null ? null : (float) $rule['max_discount'],
+                    'min_order'    => (float) $rule['min_order'],
+                ];
+            }
+        } catch (\Throwable $e) {
+            error_log('BillNest POS could not load discount rules: ' . $e->getMessage());
+        }
+
+        return $data;
+    }
+
     private function render_script(array $products, SettingsService $settings): void
     {
         $product_data = [];
@@ -147,11 +175,14 @@ class PosPage extends AdminPage
             ];
         }
 
+        $rule_data = $this->active_rule_data();
+
 ?>
         <script>
             (function() {
                 var products = <?php echo wp_json_encode($product_data); ?>;
                 var methods = <?php echo wp_json_encode(PaymentMethods::all()); ?>;
+                var rules = <?php echo wp_json_encode($rule_data); ?>;
                 var currencySymbol = <?php echo wp_json_encode($settings->get('currency_symbol')); ?>;
                 var currencyBefore = <?php echo wp_json_encode($settings->get('currency_position') !== 'after'); ?>;
                 var body = document.getElementById('billnest-items-body');
@@ -179,13 +210,17 @@ class PosPage extends AdminPage
                     return html;
                 }
 
+                function round2(number) {
+                    return Math.round(number * 100) / 100;
+                }
+
                 function calcDiscount() {
                     var type = discountType.value;
                     var value = Math.max(0, parseFloat(discountValue.value) || 0);
 
                     if (type === 'percent') {
                         value = Math.min(value, 100);
-                        return Math.round(subtotal * (value / 100) * 100) / 100;
+                        return round2(subtotal * (value / 100));
                     }
 
                     if (type === 'flat') {
@@ -195,55 +230,136 @@ class PosPage extends AdminPage
                     return 0;
                 }
 
-                function updatePayments() {
-                    var total = parseFloat(document.getElementById('billnest-total-display').textContent) || 0;
-                    var cash = 0;
-                    var nonCash = 0;
+                function readLines() {
+                    var lines = [];
 
                     payBody.querySelectorAll('tr').forEach(function(row) {
-                        var method = row.querySelector('.billnest-pay-method').value;
-                        var amount = Math.max(0, parseFloat(row.querySelector('.billnest-pay-amount').value) || 0);
+                        lines.push({
+                            method: row.querySelector('.billnest-pay-method').value,
+                            amount: Math.max(0, parseFloat(row.querySelector('.billnest-pay-amount').value) || 0)
+                        });
+                    });
 
-                        if (method === 'cash') {
-                            cash += amount;
-                        } else {
-                            nonCash += amount;
+                    return lines;
+                }
+
+                function findRule(lines) {
+                    if (subtotal <= 0) {
+                        return null;
+                    }
+
+                    var used = {};
+                    var count = 0;
+                    var paid = 0;
+
+                    lines.forEach(function(line) {
+                        if (line.amount > 0) {
+                            if (!used[line.method]) {
+                                used[line.method] = true;
+                                count++;
+                            }
+                            paid += line.amount;
                         }
                     });
 
-                    var over = nonCash > total + 0.005;
-                    var cashKept = Math.min(cash, Math.max(0, total - nonCash));
-                    var paid = cashKept + nonCash;
-                    var due = Math.round((total - paid) * 100) / 100;
-                    var change = Math.round((cash - cashKept) * 100) / 100;
-
-                    var row = document.getElementById('billnest-balance-row');
-                    var label = document.getElementById('billnest-balance-label');
-                    var amount = document.getElementById('billnest-balance-amount');
-
-                    document.getElementById('billnest-paid-display').textContent = paid.toFixed(2);
-                    document.getElementById('billnest-pay-warning').style.display = over ? '' : 'none';
-                    submitBtn.disabled = over;
-
-                    if (due > 0) {
-                        row.className = 'billnest-row billnest-balance-row billnest-due';
-                        label.textContent = 'Due Amount';
-                        amount.textContent = due.toFixed(2);
-                    } else {
-                        row.className = 'billnest-row billnest-balance-row billnest-change';
-                        label.textContent = 'Change to Return';
-                        amount.textContent = change.toFixed(2);
+                    if (count !== 1) {
+                        return null;
                     }
+
+                    var method = Object.keys(used)[0];
+
+                    if (method === 'cash') {
+                        return null;
+                    }
+
+                    var best = null;
+
+                    rules.forEach(function(rule) {
+                        if (rule.method !== method || subtotal < rule.min_order) {
+                            return;
+                        }
+
+                        var amount = rule.type === 'percent' ? subtotal * rule.value / 100 : rule.value;
+
+                        if (rule.max_discount !== null) {
+                            amount = Math.min(amount, rule.max_discount);
+                        }
+
+                        amount = round2(Math.min(amount, subtotal));
+
+                        if (amount > 0 && (best === null || amount > best.amount)) {
+                            best = {
+                                amount: amount
+                            };
+                        }
+                    });
+
+                    if (best === null) {
+                        return null;
+                    }
+
+                    if (paid + 0.005 < round2(subtotal - best.amount)) {
+                        return null;
+                    }
+
+                    return best;
                 }
 
                 function updateTotals() {
-                    var discount = calcDiscount();
-                    var total = subtotal - discount;
+                    var lines = readLines();
+                    var manual = calcDiscount();
+                    var rule = manual > 0 ? null : findRule(lines);
+                    var discount = rule ? rule.amount : manual;
+                    var total = round2(subtotal - discount);
+                    var cash = 0;
+                    var nonCash = 0;
+
+                    lines.forEach(function(line) {
+                        if (line.method === 'cash') {
+                            cash += line.amount;
+                        } else {
+                            nonCash += line.amount;
+                        }
+                    });
+
+                    var limit = rule ? subtotal : total;
+                    var over = nonCash > limit + 0.005;
+                    var nonCashKept = rule ? Math.min(nonCash, total) : nonCash;
+                    var cashKept = Math.min(cash, Math.max(0, total - nonCashKept));
+                    var paid = over ? nonCash : cashKept + nonCashKept;
+                    var shownPaid = over ? nonCash : cash + nonCashKept;
+                    var due = round2(total - paid);
+                    var change = round2(cash - cashKept);
+
+                    var balanceRow = document.getElementById('billnest-balance-row');
+                    var balanceLabel = document.getElementById('billnest-balance-label');
+                    var balanceAmount = document.getElementById('billnest-balance-amount');
 
                     document.getElementById('billnest-subtotal').textContent = subtotal.toFixed(2);
+                    document.getElementById('billnest-discount-label').textContent = rule ? 'Online payment discount' : 'Discount';
                     document.getElementById('billnest-discount-display').textContent = discount.toFixed(2);
                     document.getElementById('billnest-total-display').textContent = total.toFixed(2);
-                    updatePayments();
+                    document.getElementById('billnest-paid-display').textContent = shownPaid.toFixed(2);
+                    document.getElementById('billnest-pay-warning').style.display = over ? '' : 'none';
+                    submitBtn.disabled = over;
+
+                    if (over) {
+                        balanceRow.className = 'billnest-row billnest-balance-row billnest-due';
+                        balanceLabel.textContent = 'Online payment exceeds total by';
+                        balanceAmount.textContent = round2(nonCash - limit).toFixed(2);
+                    } else if (due > 0) {
+                        balanceRow.className = 'billnest-row billnest-balance-row billnest-due';
+                        balanceLabel.textContent = 'Due Amount';
+                        balanceAmount.textContent = due.toFixed(2);
+                    } else {
+                        balanceRow.className = 'billnest-row billnest-balance-row billnest-change';
+                        balanceLabel.textContent = 'Change to Return';
+                        balanceAmount.textContent = change.toFixed(2);
+                    }
+                }
+
+                function updatePayments() {
+                    updateTotals();
                 }
 
                 function recalcSubtotal() {
