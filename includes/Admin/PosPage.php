@@ -170,7 +170,9 @@ class PosPage extends AdminPage
         foreach ($products as $product) {
             $product_data[] = [
                 'id'    => (int) $product->id,
-                'name'  => $product->name,
+                'code'  => (string) $product->code,
+                'name'  => (string) $product->name,
+                'model' => (string) ($product->model ?? ''),
                 'price' => (float) $product->sale_price,
             ];
         }
@@ -193,14 +195,7 @@ class PosPage extends AdminPage
                 var subtotal = 0;
                 var rowIndex = 0;
                 var payIndex = 0;
-
-                function buildOptions() {
-                    var html = '';
-                    products.forEach(function(p) {
-                        html += '<option value="' + p.id + '" data-price="' + p.price + '">' + p.name + ' — ' + p.price + '</option>';
-                    });
-                    return html;
-                }
+                var maxResults = 10;
 
                 function methodOptions() {
                     var html = '';
@@ -212,6 +207,55 @@ class PosPage extends AdminPage
 
                 function round2(number) {
                     return Math.round(number * 100) / 100;
+                }
+
+                function money(number) {
+                    var text = number.toFixed(2);
+
+                    return currencyBefore ? currencySymbol + text : text + currencySymbol;
+                }
+
+                function searchProducts(query) {
+                    var tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+                    var joined = tokens.join(' ');
+                    var found = [];
+
+                    products.forEach(function(p) {
+                        var code = p.code.toLowerCase();
+                        var name = p.name.toLowerCase();
+                        var haystack = code + ' ' + name + ' ' + p.model.toLowerCase();
+
+                        for (var i = 0; i < tokens.length; i++) {
+                            if (haystack.indexOf(tokens[i]) === -1) {
+                                return;
+                            }
+                        }
+
+                        var score = 3;
+
+                        if (tokens.length) {
+                            if (code === joined) {
+                                score = 0;
+                            } else if (code.indexOf(tokens[0]) === 0) {
+                                score = 1;
+                            } else if (name.indexOf(tokens[0]) === 0) {
+                                score = 2;
+                            }
+                        }
+
+                        found.push({
+                            product: p,
+                            score: score
+                        });
+                    });
+
+                    found.sort(function(a, b) {
+                        return a.score - b.score || a.product.name.localeCompare(b.product.name);
+                    });
+
+                    return found.slice(0, maxResults).map(function(item) {
+                        return item.product;
+                    });
                 }
 
                 function calcDiscount() {
@@ -305,6 +349,18 @@ class PosPage extends AdminPage
                     return best;
                 }
 
+                function hasSelectedProduct() {
+                    var found = false;
+
+                    body.querySelectorAll('.billnest-product-id').forEach(function(field) {
+                        if (field.value !== '') {
+                            found = true;
+                        }
+                    });
+
+                    return found;
+                }
+
                 function updateTotals() {
                     var lines = readLines();
                     var manual = calcDiscount();
@@ -341,7 +397,7 @@ class PosPage extends AdminPage
                     document.getElementById('billnest-total-display').textContent = total.toFixed(2);
                     document.getElementById('billnest-paid-display').textContent = shownPaid.toFixed(2);
                     document.getElementById('billnest-pay-warning').style.display = over ? '' : 'none';
-                    submitBtn.disabled = over;
+                    submitBtn.disabled = over || !hasSelectedProduct();
 
                     if (over) {
                         balanceRow.className = 'billnest-row billnest-balance-row billnest-due';
@@ -372,27 +428,152 @@ class PosPage extends AdminPage
                 }
 
                 function recalcRow(row) {
-                    var price = parseFloat(row.querySelector('.billnest-product-select').selectedOptions[0].dataset.price);
+                    var price = parseFloat(row.dataset.price) || 0;
                     var qty = parseFloat(row.querySelector('.billnest-qty-input').value) || 0;
                     var lineTotal = price * qty;
                     row.querySelector('.billnest-line-total-value').textContent = lineTotal.toFixed(2);
                     recalcSubtotal();
                 }
 
-                function addRow() {
+                function wireProductSearch(row) {
+                    var input = row.querySelector('.billnest-product-input');
+                    var idField = row.querySelector('.billnest-product-id');
+                    var list = row.querySelector('.billnest-product-results');
+                    var qty = row.querySelector('.billnest-qty-input');
+                    var shown = [];
+                    var active = -1;
+
+                    function closeList() {
+                        list.hidden = true;
+                        active = -1;
+                    }
+
+                    function highlight() {
+                        list.querySelectorAll('li[data-index]').forEach(function(li) {
+                            var isActive = Number(li.dataset.index) === active;
+                            li.classList.toggle('is-active', isActive);
+
+                            if (isActive) {
+                                li.scrollIntoView({
+                                    block: 'nearest'
+                                });
+                            }
+                        });
+                    }
+
+                    function choose(product) {
+                        idField.value = product.id;
+                        row.dataset.price = product.price;
+                        input.value = product.name + ' (' + product.code + ')';
+                        input.classList.add('is-selected');
+                        closeList();
+                        recalcRow(row);
+                        qty.focus();
+                        qty.select();
+                    }
+
+                    function renderList() {
+                        shown = searchProducts(input.value);
+                        list.innerHTML = '';
+
+                        if (!shown.length) {
+                            var empty = document.createElement('li');
+                            empty.className = 'billnest-no-result';
+                            empty.textContent = 'No products found';
+                            list.appendChild(empty);
+                        }
+
+                        shown.forEach(function(product, i) {
+                            var li = document.createElement('li');
+                            var title = document.createElement('span');
+                            var meta = document.createElement('span');
+
+                            li.dataset.index = i;
+                            title.className = 'billnest-result-name';
+                            title.textContent = product.name + ' — ' + money(product.price);
+                            meta.className = 'billnest-result-meta';
+                            meta.textContent = [product.code, product.model].filter(Boolean).join(' · ');
+
+                            li.appendChild(title);
+                            li.appendChild(meta);
+                            li.addEventListener('mousedown', function(event) {
+                                event.preventDefault();
+                                choose(product);
+                            });
+
+                            list.appendChild(li);
+                        });
+
+                        active = shown.length ? 0 : -1;
+                        list.hidden = false;
+                        highlight();
+                    }
+
+                    input.addEventListener('input', function() {
+                        idField.value = '';
+                        row.dataset.price = '0';
+                        input.classList.remove('is-selected');
+                        recalcRow(row);
+                        renderList();
+                    });
+
+                    input.addEventListener('focus', function() {
+                        if (idField.value === '') {
+                            renderList();
+                        } else {
+                            input.select();
+                        }
+                    });
+
+                    input.addEventListener('blur', closeList);
+
+                    input.addEventListener('keydown', function(event) {
+                        if (event.key === 'ArrowDown') {
+                            event.preventDefault();
+
+                            if (list.hidden) {
+                                renderList();
+                            } else if (shown.length) {
+                                active = Math.min(active + 1, shown.length - 1);
+                                highlight();
+                            }
+                        } else if (event.key === 'ArrowUp') {
+                            event.preventDefault();
+
+                            if (!list.hidden && shown.length) {
+                                active = Math.max(active - 1, 0);
+                                highlight();
+                            }
+                        } else if (event.key === 'Enter') {
+                            event.preventDefault();
+
+                            if (!list.hidden && active >= 0 && shown[active]) {
+                                choose(shown[active]);
+                            }
+                        } else if (event.key === 'Escape') {
+                            closeList();
+                        }
+                    });
+                }
+
+                function addRow(focusSearch) {
                     var index = rowIndex++;
                     var row = document.createElement('tr');
+                    row.dataset.price = '0';
                     row.innerHTML =
-                        '<td><select name="items[' + index + '][product_id]" class="billnest-product-select">' + buildOptions() + '</select></td>' +
+                        '<td><div class="billnest-product-search">' +
+                        '<input type="text" class="billnest-product-input" placeholder="Search code, name or model" autocomplete="off">' +
+                        '<input type="hidden" name="items[' + index + '][product_id]" class="billnest-product-id" value="">' +
+                        '<ul class="billnest-product-results" hidden></ul>' +
+                        '</div></td>' +
                         '<td><input type="number" step="0.01" min="0.01" value="1" name="items[' + index + '][qty]" class="billnest-qty-input"></td>' +
                         '<td class="billnest-line-total">' + (currencyBefore ? currencySymbol : '') + '<span class="billnest-line-total-value">0.00</span>' + (currencyBefore ? '' : currencySymbol) + '</td>' +
                         '<td><button type="button" class="button billnest-remove-row">&times;</button></td>';
 
                     body.appendChild(row);
 
-                    row.querySelector('.billnest-product-select').addEventListener('change', function() {
-                        recalcRow(row);
-                    });
+                    wireProductSearch(row);
+
                     row.querySelector('.billnest-qty-input').addEventListener('input', function() {
                         recalcRow(row);
                     });
@@ -402,6 +583,10 @@ class PosPage extends AdminPage
                     });
 
                     recalcRow(row);
+
+                    if (focusSearch === true) {
+                        row.querySelector('.billnest-product-input').focus();
+                    }
                 }
 
                 function syncReference(row) {
@@ -450,10 +635,12 @@ class PosPage extends AdminPage
                     updateTotals();
                 });
                 discountValue.addEventListener('input', updateTotals);
-                document.getElementById('billnest-add-item').addEventListener('click', addRow);
+                document.getElementById('billnest-add-item').addEventListener('click', function() {
+                    addRow(true);
+                });
                 document.getElementById('billnest-add-payment').addEventListener('click', addPayment);
 
-                addRow();
+                addRow(false);
                 addPayment();
             })();
         </script>
