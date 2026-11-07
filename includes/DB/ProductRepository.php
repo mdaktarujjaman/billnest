@@ -43,6 +43,20 @@ class ProductRepository
         return $product ?: null;
     }
 
+        public function get_stock_for_update(int $id): ?object
+    {
+        global $wpdb;
+
+        $product = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT id, name, stock_qty FROM {$this->table} WHERE id = %d FOR UPDATE",
+                $id
+            )
+        );
+
+        return $product ?: null;
+    }
+
     public function code_exists(string $code, int $exclude_id = 0): bool
     {
         global $wpdb;

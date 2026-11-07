@@ -71,6 +71,17 @@ class SettingsPage extends AdminPage
 
         echo '</table>';
 
+        echo '<h2>' . esc_html__('Inventory', 'billnest') . '</h2>';
+        echo '<table class="form-table">';
+
+        echo '<tr><th>' . esc_html__('Negative Stock', 'billnest') . '</th>';
+        echo '<td><label for="allow_negative_stock">';
+        echo '<input type="checkbox" name="allow_negative_stock" id="allow_negative_stock" value="1"' . checked($settings['allow_negative_stock'], '1', false) . '> ';
+        echo esc_html__('Allow selling more than the available stock', 'billnest');
+        echo '</label></td></tr>';
+
+        echo '</table>';
+
         submit_button(__('Save Settings', 'billnest'));
         echo '</form>';
         echo '</div>';
@@ -82,7 +93,9 @@ class SettingsPage extends AdminPage
             return;
         }
 
-        if (! wp_verify_nonce($_POST['billnest_settings_nonce'], 'billnest_save_settings')) {
+        $nonce = sanitize_text_field(wp_unslash($_POST['billnest_settings_nonce']));
+
+        if (! wp_verify_nonce($nonce, 'billnest_save_settings')) {
             wp_die(esc_html__('Security check failed.', 'billnest'));
         }
 

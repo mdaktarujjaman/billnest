@@ -67,6 +67,8 @@ class InvoiceService
         $wpdb->query('START TRANSACTION');
 
         try {
+            $this->stock->assert_available($data['items']);
+
             $invoice_no = $this->numbering->get_next_invoice_number();
 
             $invoice_id = $this->invoices->create_invoice([

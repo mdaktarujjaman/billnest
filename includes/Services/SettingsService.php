@@ -14,11 +14,12 @@ class SettingsService
     public function defaults(): array
     {
         return [
-            'business_name'     => get_bloginfo('name'),
-            'business_phone'    => '',
-            'business_address'  => '',
-            'currency_symbol'   => '$',
-            'currency_position' => 'before',
+            'business_name'        => get_bloginfo('name'),
+            'business_phone'       => '',
+            'business_address'     => '',
+            'currency_symbol'      => '$',
+            'currency_position'    => 'before',
+            'allow_negative_stock' => '0',
         ];
     }
 
@@ -36,16 +37,22 @@ class SettingsService
         return (string) ($settings[$key] ?? '');
     }
 
+    public function allow_negative_stock(): bool
+    {
+        return $this->get('allow_negative_stock') === '1';
+    }
+
     public function save(array $data): void
     {
         $position = $data['currency_position'] ?? 'before';
 
         $clean = [
-            'business_name'     => sanitize_text_field($data['business_name'] ?? ''),
-            'business_phone'    => sanitize_text_field($data['business_phone'] ?? ''),
-            'business_address'  => sanitize_textarea_field($data['business_address'] ?? ''),
-            'currency_symbol'   => sanitize_text_field($data['currency_symbol'] ?? ''),
-            'currency_position' => in_array($position, ['before', 'after'], true) ? $position : 'before',
+            'business_name'        => sanitize_text_field($data['business_name'] ?? ''),
+            'business_phone'       => sanitize_text_field($data['business_phone'] ?? ''),
+            'business_address'     => sanitize_textarea_field($data['business_address'] ?? ''),
+            'currency_symbol'      => sanitize_text_field($data['currency_symbol'] ?? ''),
+            'currency_position'    => in_array($position, ['before', 'after'], true) ? $position : 'before',
+            'allow_negative_stock' => ! empty($data['allow_negative_stock']) ? '1' : '0',
         ];
 
         update_option(self::OPTION, $clean);
