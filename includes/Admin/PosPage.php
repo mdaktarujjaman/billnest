@@ -59,13 +59,13 @@ class PosPage extends AdminPage
             echo '<div class="notice ' . esc_attr($class) . '"><p>' . esc_html($result['message']) . '</p></div>';
         }
 
-        $this->render_form($customers, $products, $settings);
-        $this->render_script($products, $settings);
+        $this->render_form($settings);
+        $this->render_script($products, $customers, $settings);
 
         echo '</div>';
     }
 
-    private function render_form(array $customers, array $products, SettingsService $settings): void
+    private function render_form(SettingsService $settings): void
     {
         echo '<div class="billnest-pos-wrap">';
         echo '<div class="billnest-pos-header">' . esc_html__('Create New Invoice', 'billnest') . '</div>';
@@ -75,13 +75,14 @@ class PosPage extends AdminPage
         wp_nonce_field('billnest_create_invoice', 'billnest_invoice_nonce');
 
         echo '<table class="form-table">';
-        echo '<tr><th><label for="customer_id">' . esc_html__('Customer', 'billnest') . '</label></th>';
-        echo '<td><select name="customer_id" id="customer_id">';
-        echo '<option value="0">' . esc_html__('-- Walk-in Customer --', 'billnest') . '</option>';
-        foreach ($customers as $customer) {
-            echo '<option value="' . esc_attr($customer->id) . '">' . esc_html($customer->name) . '</option>';
-        }
-        echo '</select></td></tr>';
+        echo '<tr><th><label for="customer_search">' . esc_html__('Customer', 'billnest') . '</label></th>';
+        echo '<td><div class="billnest-customer-search">';
+        echo '<input type="text" id="customer_search" class="billnest-customer-input" placeholder="' . esc_attr__('Walk-in customer (search name or phone to pick one)', 'billnest') . '" autocomplete="off">';
+        echo '<input type="hidden" name="customer_id" id="customer_id" value="0">';
+        echo '<button type="button" class="button billnest-customer-clear" id="billnest-customer-clear" title="' . esc_attr__('Back to walk-in customer', 'billnest') . '" hidden>&times;</button>';
+        echo '<ul class="billnest-customer-results" id="billnest-customer-results" hidden></ul>';
+        echo '<div class="billnest-customer-note" id="billnest-customer-note" hidden></div>';
+        echo '</div></td></tr>';
         echo '</table>';
 
         echo '<table class="wp-list-table widefat fixed striped" id="billnest-items-table">';
@@ -167,7 +168,7 @@ class PosPage extends AdminPage
         return $data;
     }
 
-    private function render_script(array $products, SettingsService $settings): void
+    private function render_script(array $products, array $customers, SettingsService $settings): void
     {
         $product_data = [];
         foreach ($products as $product) {
@@ -181,12 +182,24 @@ class PosPage extends AdminPage
             ];
         }
 
+        $customer_data = [];
+        foreach ($customers as $customer) {
+            $customer_data[] = [
+                'id'    => (int) $customer->id,
+                'name'  => (string) $customer->name,
+                'phone' => (string) ($customer->phone ?? ''),
+                'email' => (string) ($customer->email ?? ''),
+                'due'   => (float) $customer->current_due,
+            ];
+        }
+
         $rule_data = $this->active_rule_data();
 
 ?>
         <script>
             (function() {
                 var products = <?php echo wp_json_encode($product_data); ?>;
+                var customers = <?php echo wp_json_encode($customer_data); ?>;
                 var methods = <?php echo wp_json_encode(PaymentMethods::all()); ?>;
                 var rules = <?php echo wp_json_encode($rule_data); ?>;
                 var allowNegative = <?php echo wp_json_encode($settings->allow_negative_stock()); ?>;
@@ -202,6 +215,7 @@ class PosPage extends AdminPage
                 var rowIndex = 0;
                 var payIndex = 0;
                 var maxResults = 10;
+                var customerPending = false;
 
                 products.forEach(function(p) {
                     productsById[p.id] = p;
@@ -277,6 +291,46 @@ class PosPage extends AdminPage
 
                     return found.slice(0, maxResults).map(function(item) {
                         return item.product;
+                    });
+                }
+
+                function searchCustomers(query) {
+                    var tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+                    var found = [];
+
+                    customers.forEach(function(c) {
+                        var name = c.name.toLowerCase();
+                        var phone = c.phone.toLowerCase();
+                        var haystack = name + ' ' + phone + ' ' + c.email.toLowerCase();
+
+                        for (var i = 0; i < tokens.length; i++) {
+                            if (haystack.indexOf(tokens[i]) === -1) {
+                                return;
+                            }
+                        }
+
+                        var score = 2;
+
+                        if (tokens.length) {
+                            if (name.indexOf(tokens[0]) === 0) {
+                                score = 0;
+                            } else if (phone.indexOf(tokens[0]) === 0) {
+                                score = 1;
+                            }
+                        }
+
+                        found.push({
+                            customer: c,
+                            score: score
+                        });
+                    });
+
+                    found.sort(function(a, b) {
+                        return a.score - b.score || a.customer.name.localeCompare(b.customer.name);
+                    });
+
+                    return found.slice(0, maxResults).map(function(item) {
+                        return item.customer;
                     });
                 }
 
@@ -461,7 +515,7 @@ class PosPage extends AdminPage
                     document.getElementById('billnest-total-display').textContent = total.toFixed(2);
                     document.getElementById('billnest-paid-display').textContent = shownPaid.toFixed(2);
                     document.getElementById('billnest-pay-warning').style.display = over ? '' : 'none';
-                    submitBtn.disabled = over || !hasSelectedProduct();
+                    submitBtn.disabled = over || !hasSelectedProduct() || customerPending;
 
                     if (over) {
                         balanceRow.className = 'billnest-row billnest-balance-row billnest-due';
@@ -497,6 +551,167 @@ class PosPage extends AdminPage
                     var lineTotal = price * qty;
                     row.querySelector('.billnest-line-total-value').textContent = lineTotal.toFixed(2);
                     recalcSubtotal();
+                }
+
+                function wireCustomerSearch() {
+                    var input = document.getElementById('customer_search');
+                    var idField = document.getElementById('customer_id');
+                    var list = document.getElementById('billnest-customer-results');
+                    var note = document.getElementById('billnest-customer-note');
+                    var clearBtn = document.getElementById('billnest-customer-clear');
+                    var shown = [];
+                    var active = -1;
+
+                    function closeList() {
+                        list.hidden = true;
+                        active = -1;
+                    }
+
+                    function highlight() {
+                        list.querySelectorAll('li[data-index]').forEach(function(li) {
+                            var isActive = Number(li.dataset.index) === active;
+                            li.classList.toggle('is-active', isActive);
+
+                            if (isActive) {
+                                li.scrollIntoView({
+                                    block: 'nearest'
+                                });
+                            }
+                        });
+                    }
+
+                    function showNote(text, warn) {
+                        note.hidden = text === '';
+                        note.textContent = text;
+                        note.className = 'billnest-customer-note' + (warn ? ' is-warn' : '');
+                    }
+
+                    function choose(customer) {
+                        idField.value = customer.id;
+                        input.value = customer.name + (customer.phone ? ' (' + customer.phone + ')' : '');
+                        input.classList.add('is-selected');
+                        clearBtn.hidden = false;
+                        customerPending = false;
+                        closeList();
+
+                        if (customer.due > 0) {
+                            showNote('Current due: ' + money(customer.due), true);
+                        } else {
+                            showNote('', false);
+                        }
+
+                        updateTotals();
+                    }
+
+                    function renderList() {
+                        shown = searchCustomers(input.value);
+                        list.innerHTML = '';
+
+                        if (!shown.length) {
+                            var empty = document.createElement('li');
+                            empty.className = 'billnest-no-result';
+                            empty.textContent = 'No customers found';
+                            list.appendChild(empty);
+                        }
+
+                        shown.forEach(function(customer, i) {
+                            var li = document.createElement('li');
+                            var title = document.createElement('span');
+                            var meta = document.createElement('span');
+                            var details = [customer.phone, customer.email].filter(Boolean).join(' · ');
+
+                            li.dataset.index = i;
+                            title.className = 'billnest-result-name';
+                            title.textContent = customer.name;
+                            meta.className = 'billnest-result-meta';
+                            meta.textContent = details;
+
+                            if (customer.due > 0) {
+                                var due = document.createElement('span');
+                                due.className = 'billnest-result-stock is-low';
+                                due.textContent = (details ? ' · ' : '') + 'Due: ' + money(customer.due);
+                                meta.appendChild(due);
+                            }
+
+                            li.appendChild(title);
+                            li.appendChild(meta);
+                            li.addEventListener('mousedown', function(event) {
+                                event.preventDefault();
+                                choose(customer);
+                            });
+
+                            list.appendChild(li);
+                        });
+
+                        active = shown.length ? 0 : -1;
+                        list.hidden = false;
+                        highlight();
+                    }
+
+                    input.addEventListener('input', function() {
+                        idField.value = '0';
+                        input.classList.remove('is-selected');
+                        clearBtn.hidden = input.value === '';
+                        customerPending = input.value.trim() !== '';
+
+                        if (customerPending) {
+                            showNote('Pick a customer from the list, or clear the box for a walk-in sale', true);
+                        } else {
+                            showNote('', false);
+                        }
+
+                        updateTotals();
+                        renderList();
+                    });
+
+                    input.addEventListener('focus', function() {
+                        if (idField.value === '0') {
+                            renderList();
+                        } else {
+                            input.select();
+                        }
+                    });
+
+                    input.addEventListener('blur', closeList);
+
+                    input.addEventListener('keydown', function(event) {
+                        if (event.key === 'ArrowDown') {
+                            event.preventDefault();
+
+                            if (list.hidden) {
+                                renderList();
+                            } else if (shown.length) {
+                                active = Math.min(active + 1, shown.length - 1);
+                                highlight();
+                            }
+                        } else if (event.key === 'ArrowUp') {
+                            event.preventDefault();
+
+                            if (!list.hidden && shown.length) {
+                                active = Math.max(active - 1, 0);
+                                highlight();
+                            }
+                        } else if (event.key === 'Enter') {
+                            event.preventDefault();
+
+                            if (!list.hidden && active >= 0 && shown[active]) {
+                                choose(shown[active]);
+                            }
+                        } else if (event.key === 'Escape') {
+                            closeList();
+                        }
+                    });
+
+                    clearBtn.addEventListener('click', function() {
+                        idField.value = '0';
+                        input.value = '';
+                        input.classList.remove('is-selected');
+                        clearBtn.hidden = true;
+                        customerPending = false;
+                        showNote('', false);
+                        updateTotals();
+                        input.focus();
+                    });
                 }
 
                 function wireProductSearch(row) {
@@ -710,6 +925,7 @@ class PosPage extends AdminPage
                 });
                 document.getElementById('billnest-add-payment').addEventListener('click', addPayment);
 
+                wireCustomerSearch();
                 addRow(false);
                 addPayment();
             })();
