@@ -28,11 +28,14 @@ class PosPage extends AdminPage
 
     public function enqueue_assets(): void
     {
+        $file    = dirname(__DIR__, 2) . '/assets/admin/css/pos.css';
+        $version = file_exists($file) ? (string) filemtime($file) : BILLNEST_VERSION;
+
         wp_enqueue_style(
             'billnest-pos',
             BILLNEST_PLUGIN_URL . 'assets/admin/css/pos.css',
             [],
-            BILLNEST_VERSION
+            $version
         );
     }
 
@@ -174,6 +177,7 @@ class PosPage extends AdminPage
                 'name'  => (string) $product->name,
                 'model' => (string) ($product->model ?? ''),
                 'price' => (float) $product->sale_price,
+                'stock' => (float) $product->stock_qty,
             ];
         }
 
@@ -185,6 +189,7 @@ class PosPage extends AdminPage
                 var products = <?php echo wp_json_encode($product_data); ?>;
                 var methods = <?php echo wp_json_encode(PaymentMethods::all()); ?>;
                 var rules = <?php echo wp_json_encode($rule_data); ?>;
+                var allowNegative = <?php echo wp_json_encode($settings->allow_negative_stock()); ?>;
                 var currencySymbol = <?php echo wp_json_encode($settings->get('currency_symbol')); ?>;
                 var currencyBefore = <?php echo wp_json_encode($settings->get('currency_position') !== 'after'); ?>;
                 var body = document.getElementById('billnest-items-body');
@@ -192,10 +197,15 @@ class PosPage extends AdminPage
                 var discountType = document.getElementById('discount_type');
                 var discountValue = document.getElementById('discount_value');
                 var submitBtn = document.querySelector('#billnest-pos-form input[type="submit"]');
+                var productsById = {};
                 var subtotal = 0;
                 var rowIndex = 0;
                 var payIndex = 0;
                 var maxResults = 10;
+
+                products.forEach(function(p) {
+                    productsById[p.id] = p;
+                });
 
                 function methodOptions() {
                     var html = '';
@@ -213,6 +223,18 @@ class PosPage extends AdminPage
                     var text = number.toFixed(2);
 
                     return currencyBefore ? currencySymbol + text : text + currencySymbol;
+                }
+
+                function fmtQty(number) {
+                    return String(parseFloat(number.toFixed(4)));
+                }
+
+                function stockLabel(product) {
+                    if (!allowNegative && product.stock <= 0) {
+                        return 'Out of stock';
+                    }
+
+                    return 'Stock: ' + fmtQty(product.stock);
                 }
 
                 function searchProducts(query) {
@@ -361,7 +383,49 @@ class PosPage extends AdminPage
                     return found;
                 }
 
+                function refreshStock() {
+                    var totals = {};
+                    var rows = body.querySelectorAll('tr');
+
+                    rows.forEach(function(row) {
+                        var id = row.querySelector('.billnest-product-id').value;
+
+                        if (id !== '') {
+                            totals[id] = (totals[id] || 0) + (parseFloat(row.querySelector('.billnest-qty-input').value) || 0);
+                        }
+                    });
+
+                    rows.forEach(function(row) {
+                        var id = row.querySelector('.billnest-product-id').value;
+                        var note = row.querySelector('.billnest-stock-note');
+                        var product = productsById[id];
+
+                        if (id === '' || !product) {
+                            note.hidden = true;
+                            note.className = 'billnest-stock-note';
+                            note.textContent = '';
+                            return;
+                        }
+
+                        var requested = totals[id];
+
+                        note.hidden = false;
+
+                        if (!allowNegative && requested - product.stock > 0.0001) {
+                            note.className = 'billnest-stock-note is-warn';
+                            note.textContent = product.stock <= 0 ?
+                                'Out of stock, the sale will be rejected' :
+                                'Only ' + fmtQty(product.stock) + ' in stock, ' + fmtQty(requested) + ' requested';
+                        } else {
+                            note.className = 'billnest-stock-note';
+                            note.textContent = (allowNegative ? 'Stock: ' : 'Available: ') + fmtQty(product.stock);
+                        }
+                    });
+                }
+
                 function updateTotals() {
+                    refreshStock();
+
                     var lines = readLines();
                     var manual = calcDiscount();
                     var rule = manual > 0 ? null : findRule(lines);
@@ -487,12 +551,17 @@ class PosPage extends AdminPage
                             var li = document.createElement('li');
                             var title = document.createElement('span');
                             var meta = document.createElement('span');
+                            var stock = document.createElement('span');
+                            var details = [product.code, product.model].filter(Boolean).join(' · ');
 
                             li.dataset.index = i;
                             title.className = 'billnest-result-name';
                             title.textContent = product.name + ' — ' + money(product.price);
                             meta.className = 'billnest-result-meta';
-                            meta.textContent = [product.code, product.model].filter(Boolean).join(' · ');
+                            meta.textContent = details;
+                            stock.className = 'billnest-result-stock' + (product.stock <= 0 ? ' is-low' : '');
+                            stock.textContent = (details ? ' · ' : '') + stockLabel(product);
+                            meta.appendChild(stock);
 
                             li.appendChild(title);
                             li.appendChild(meta);
@@ -564,6 +633,7 @@ class PosPage extends AdminPage
                         '<td><div class="billnest-product-search">' +
                         '<input type="text" class="billnest-product-input" placeholder="Search code, name or model" autocomplete="off">' +
                         '<input type="hidden" name="items[' + index + '][product_id]" class="billnest-product-id" value="">' +
+                        '<div class="billnest-stock-note" hidden></div>' +
                         '<ul class="billnest-product-results" hidden></ul>' +
                         '</div></td>' +
                         '<td><input type="number" step="0.01" min="0.01" value="1" name="items[' + index + '][qty]" class="billnest-qty-input"></td>' +
