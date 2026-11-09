@@ -45,7 +45,8 @@ class PosPage extends AdminPage
             wp_die(esc_html__('You do not have permission to access this page.', 'billnest'));
         }
 
-        $result = $this->handle_form_submission();
+        $result  = $this->handle_form_submission();
+        $restore = ($result && $result['type'] === 'error') ? $this->posted_form_data() : null;
 
         $customers = (new CustomerRepository())->get_all();
         $products  = (new ProductRepository())->get_all();
@@ -60,7 +61,7 @@ class PosPage extends AdminPage
         }
 
         $this->render_form($settings);
-        $this->render_script($products, $customers, $settings);
+        $this->render_script($products, $customers, $settings, $restore);
 
         echo '</div>';
     }
@@ -168,7 +169,7 @@ class PosPage extends AdminPage
         return $data;
     }
 
-    private function render_script(array $products, array $customers, SettingsService $settings): void
+    private function render_script(array $products, array $customers, SettingsService $settings, ?array $restore): void
     {
         $product_data = [];
         foreach ($products as $product) {
@@ -202,6 +203,7 @@ class PosPage extends AdminPage
                 var customers = <?php echo wp_json_encode($customer_data); ?>;
                 var methods = <?php echo wp_json_encode(PaymentMethods::all()); ?>;
                 var rules = <?php echo wp_json_encode($rule_data); ?>;
+                var restore = <?php echo wp_json_encode($restore); ?>;
                 var allowNegative = <?php echo wp_json_encode($settings->allow_negative_stock()); ?>;
                 var currencySymbol = <?php echo wp_json_encode($settings->get('currency_symbol')); ?>;
                 var currencyBefore = <?php echo wp_json_encode($settings->get('currency_position') !== 'after'); ?>;
@@ -712,6 +714,10 @@ class PosPage extends AdminPage
                         updateTotals();
                         input.focus();
                     });
+
+                    return {
+                        select: choose
+                    };
                 }
 
                 function wireProductSearch(row) {
@@ -740,15 +746,18 @@ class PosPage extends AdminPage
                         });
                     }
 
-                    function choose(product) {
+                    function choose(product, silent) {
                         idField.value = product.id;
                         row.dataset.price = product.price;
                         input.value = product.name + ' (' + product.code + ')';
                         input.classList.add('is-selected');
                         closeList();
                         recalcRow(row);
-                        qty.focus();
-                        qty.select();
+
+                        if (silent !== true) {
+                            qty.focus();
+                            qty.select();
+                        }
                     }
 
                     function renderList() {
@@ -838,6 +847,10 @@ class PosPage extends AdminPage
                             closeList();
                         }
                     });
+
+                    row.pickProduct = function(product) {
+                        choose(product, true);
+                    };
                 }
 
                 function addRow(focusSearch) {
@@ -872,6 +885,8 @@ class PosPage extends AdminPage
                     if (focusSearch === true) {
                         row.querySelector('.billnest-product-input').focus();
                     }
+
+                    return row;
                 }
 
                 function syncReference(row) {
@@ -909,6 +924,68 @@ class PosPage extends AdminPage
 
                     syncReference(row);
                     updatePayments();
+
+                    return row;
+                }
+
+                function applyRestore(data) {
+                    var restoredRows = 0;
+
+                    (data.items || []).forEach(function(item) {
+                        var product = productsById[item.product_id];
+
+                        if (!product) {
+                            return;
+                        }
+
+                        var row = addRow(false);
+                        row.pickProduct(product);
+                        row.querySelector('.billnest-qty-input').value = item.qty;
+                        recalcRow(row);
+                        restoredRows++;
+                    });
+
+                    if (restoredRows === 0) {
+                        addRow(false);
+                    }
+
+                    var lines = data.payments || [];
+
+                    lines.forEach(function(line) {
+                        var row = addPayment();
+                        var method = row.querySelector('.billnest-pay-method');
+
+                        if (methods[line.method] !== undefined) {
+                            method.value = line.method;
+                        }
+
+                        syncReference(row);
+                        row.querySelector('.billnest-pay-amount').value = line.amount;
+
+                        if (method.value !== 'cash') {
+                            row.querySelector('.billnest-pay-reference').value = line.reference;
+                        }
+                    });
+
+                    if (!lines.length) {
+                        addPayment();
+                    }
+
+                    if (data.discount_type) {
+                        discountType.value = data.discount_type;
+                        discountValue.disabled = false;
+                        discountValue.value = data.discount_value;
+                    }
+
+                    if (data.customer_id > 0) {
+                        customers.forEach(function(customer) {
+                            if (customer.id === data.customer_id) {
+                                customerControl.select(customer);
+                            }
+                        });
+                    }
+
+                    updateTotals();
                 }
 
                 discountType.addEventListener('change', function() {
@@ -925,9 +1002,14 @@ class PosPage extends AdminPage
                 });
                 document.getElementById('billnest-add-payment').addEventListener('click', addPayment);
 
-                wireCustomerSearch();
-                addRow(false);
-                addPayment();
+                var customerControl = wireCustomerSearch();
+
+                if (restore) {
+                    applyRestore(restore);
+                } else {
+                    addRow(false);
+                    addPayment();
+                }
             })();
         </script>
 <?php
@@ -950,6 +1032,42 @@ class PosPage extends AdminPage
         }
 
         return $lines;
+    }
+
+    private function posted_form_data(): array
+    {
+        $items = [];
+
+        foreach ((array) ($_POST['items'] ?? []) as $raw_item) {
+            if (! is_array($raw_item)) {
+                continue;
+            }
+
+            $product_id = absint($raw_item['product_id'] ?? 0);
+
+            if ($product_id <= 0) {
+                continue;
+            }
+
+            $items[] = [
+                'product_id' => $product_id,
+                'qty'        => floatval($raw_item['qty'] ?? 1),
+            ];
+        }
+
+        $discount_type = sanitize_key(wp_unslash($_POST['discount_type'] ?? ''));
+
+        if (! in_array($discount_type, ['flat', 'percent'], true)) {
+            $discount_type = '';
+        }
+
+        return [
+            'customer_id'    => absint($_POST['customer_id'] ?? 0),
+            'items'          => $items,
+            'discount_type'  => $discount_type,
+            'discount_value' => $discount_type ? max(0, floatval($_POST['discount_value'] ?? 0)) : 0,
+            'payments'       => $this->read_payment_lines(),
+        ];
     }
 
     private function handle_form_submission(): ?array

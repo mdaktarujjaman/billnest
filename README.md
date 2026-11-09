@@ -289,7 +289,7 @@ All write routes require `current_user_can('manage_billnest')`, a nonce, and a `
 - [x] "Allow negative stock" setting and stock check at sale
 - [x] Product search in the POS (code, name, model)
 - [x] Live stock warning in the POS
-- [ ] Customer search in the POS
+- [x] Customer search in the POS
 - [ ] Sales list filters and pagination
 
 ### Phase 4: Money Flow (done)
