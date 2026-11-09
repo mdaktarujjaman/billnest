@@ -32,6 +32,82 @@ class InvoiceRepository
         );
     }
 
+    public function search(array $filters, int $limit, int $offset): array
+    {
+        global $wpdb;
+
+        [$where, $args] = $this->build_filter($filters);
+
+        $args[] = max(1, $limit);
+        $args[] = max(0, $offset);
+
+        return $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT i.*, c.name AS customer_name
+                 FROM {$this->table} i
+                 LEFT JOIN {$wpdb->prefix}billnest_customers c ON i.customer_id = c.id
+                 WHERE {$where}
+                 ORDER BY i.id DESC
+                 LIMIT %d OFFSET %d",
+                $args
+            )
+        );
+    }
+
+    public function summarize(array $filters): object
+    {
+        global $wpdb;
+
+        [$where, $args] = $this->build_filter($filters);
+
+        $sql = "SELECT COUNT(*) AS invoice_count,
+                       COALESCE(SUM(CASE WHEN i.status = 'completed' THEN i.total ELSE 0 END), 0) AS total_sales,
+                       COALESCE(SUM(CASE WHEN i.status = 'completed' THEN i.due_amount ELSE 0 END), 0) AS total_due
+                FROM {$this->table} i
+                LEFT JOIN {$wpdb->prefix}billnest_customers c ON i.customer_id = c.id
+                WHERE {$where}";
+
+        $row = $wpdb->get_row($args ? $wpdb->prepare($sql, $args) : $sql);
+
+        return $row ?: (object) [
+            'invoice_count' => 0,
+            'total_sales'   => 0,
+            'total_due'     => 0,
+        ];
+    }
+
+    private function build_filter(array $filters): array
+    {
+        global $wpdb;
+
+        $where = ["i.status != 'cancelled'"];
+        $args  = [];
+
+        if (! empty($filters['status'])) {
+            $where[] = 'i.status = %s';
+            $args[]  = (string) $filters['status'];
+        }
+
+        if (! empty($filters['date_from'])) {
+            $where[] = 'i.invoice_date >= %s';
+            $args[]  = (string) $filters['date_from'];
+        }
+
+        if (! empty($filters['date_to'])) {
+            $where[] = 'i.invoice_date <= %s';
+            $args[]  = (string) $filters['date_to'];
+        }
+
+        if (! empty($filters['search'])) {
+            $like    = '%' . $wpdb->esc_like((string) $filters['search']) . '%';
+            $where[] = '(i.invoice_no LIKE %s OR c.name LIKE %s)';
+            $args[]  = $like;
+            $args[]  = $like;
+        }
+
+        return [implode(' AND ', $where), $args];
+    }
+
     public function get_by_id(int $id): ?object
     {
         global $wpdb;

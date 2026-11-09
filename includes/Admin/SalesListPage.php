@@ -16,6 +16,8 @@ if (! defined('ABSPATH')) {
 class SalesListPage extends AdminPage
 {
 
+    private const PER_PAGE = 20;
+
     public function get_slug(): string
     {
         return 'billnest-sales';
@@ -76,16 +78,107 @@ class SalesListPage extends AdminPage
         exit;
     }
 
+    private function clean_date(string $value): string
+    {
+        if (! preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
+            return '';
+        }
+
+        [$year, $month, $day] = array_map('intval', explode('-', $value));
+
+        return checkdate($month, $day, $year) ? $value : '';
+    }
+
+    private function read_filters(): array
+    {
+        $status = sanitize_key(wp_unslash($_GET['status'] ?? ''));
+
+        if (! in_array($status, ['completed', 'returned'], true)) {
+            $status = '';
+        }
+
+        $from = $this->clean_date(sanitize_text_field(wp_unslash($_GET['date_from'] ?? '')));
+        $to   = $this->clean_date(sanitize_text_field(wp_unslash($_GET['date_to'] ?? '')));
+
+        if ($from !== '' && $to !== '' && $from > $to) {
+            [$from, $to] = [$to, $from];
+        }
+
+        return [
+            'search'    => sanitize_text_field(wp_unslash($_GET['search'] ?? '')),
+            'status'    => $status,
+            'date_from' => $from,
+            'date_to'   => $to,
+        ];
+    }
+
+    private function render_filter_form(array $filters): void
+    {
+        $reset_url = admin_url('admin.php?page=' . $this->get_slug());
+
+        echo '<form method="get" class="billnest-filter-form" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:16px 0;">';
+        echo '<input type="hidden" name="page" value="' . esc_attr($this->get_slug()) . '">';
+
+        echo '<div><label for="billnest-f-search" style="display:block;font-weight:600;margin-bottom:4px;">' . esc_html__('Invoice no or customer', 'billnest') . '</label>';
+        echo '<input type="text" id="billnest-f-search" name="search" value="' . esc_attr($filters['search']) . '" class="regular-text" style="min-width:240px;"></div>';
+
+        echo '<div><label for="billnest-f-from" style="display:block;font-weight:600;margin-bottom:4px;">' . esc_html__('From', 'billnest') . '</label>';
+        echo '<input type="date" id="billnest-f-from" name="date_from" value="' . esc_attr($filters['date_from']) . '"></div>';
+
+        echo '<div><label for="billnest-f-to" style="display:block;font-weight:600;margin-bottom:4px;">' . esc_html__('To', 'billnest') . '</label>';
+        echo '<input type="date" id="billnest-f-to" name="date_to" value="' . esc_attr($filters['date_to']) . '"></div>';
+
+        echo '<div><label for="billnest-f-status" style="display:block;font-weight:600;margin-bottom:4px;">' . esc_html__('Status', 'billnest') . '</label>';
+        echo '<select id="billnest-f-status" name="status">';
+        echo '<option value="">' . esc_html__('All', 'billnest') . '</option>';
+        echo '<option value="completed"' . selected($filters['status'], 'completed', false) . '>' . esc_html__('Completed', 'billnest') . '</option>';
+        echo '<option value="returned"' . selected($filters['status'], 'returned', false) . '>' . esc_html__('Returned', 'billnest') . '</option>';
+        echo '</select></div>';
+
+        echo '<div>';
+        echo '<button type="submit" class="button button-primary">' . esc_html__('Filter', 'billnest') . '</button> ';
+        echo '<a class="button" href="' . esc_url($reset_url) . '">' . esc_html__('Reset', 'billnest') . '</a>';
+        echo '</div>';
+
+        echo '</form>';
+    }
+
     private function render_list(): void
     {
-        $invoices = (new InvoiceRepository())->get_all();
-        $settings = new SettingsService();
+        $repository = new InvoiceRepository();
+        $settings   = new SettingsService();
+        $filters    = $this->read_filters();
+        $summary    = $repository->summarize($filters);
+        $count      = (int) $summary->invoice_count;
+        $pages      = max(1, (int) ceil($count / self::PER_PAGE));
+        $page       = min(max(1, absint($_GET['paged'] ?? 1)), $pages);
+        $invoices   = $repository->search($filters, self::PER_PAGE, ($page - 1) * self::PER_PAGE);
+        $has_filter = implode('', $filters) !== '';
+        $reset_url  = admin_url('admin.php?page=' . $this->get_slug());
 
         echo '<div class="wrap">';
         echo '<h1>' . esc_html($this->get_title()) . '</h1>';
 
-        if (empty($invoices)) {
+        if ($count === 0 && ! $has_filter) {
             echo '<p>' . esc_html__('No invoices yet.', 'billnest') . '</p>';
+            echo '</div>';
+            return;
+        }
+
+        $this->render_filter_form($filters);
+
+        echo '<p class="billnest-list-summary" style="margin:8px 0 12px;">';
+        echo '<strong>' . esc_html(sprintf(
+            /* translators: %s: number of invoices */
+            _n('%s invoice', '%s invoices', $count, 'billnest'),
+            number_format_i18n($count)
+        )) . '</strong>';
+        echo ' &middot; ' . esc_html__('Sales total (completed only):', 'billnest') . ' <strong>' . esc_html($settings->format_amount((float) $summary->total_sales)) . '</strong>';
+        echo ' &middot; ' . esc_html__('Due (completed only):', 'billnest') . ' <strong>' . esc_html($settings->format_amount((float) $summary->total_due)) . '</strong>';
+        echo '</p>';
+
+        if (empty($invoices)) {
+            echo '<p>' . esc_html__('No invoices match these filters.', 'billnest') . ' <a href="' . esc_url($reset_url) . '">' . esc_html__('Reset filters', 'billnest') . '</a></p>';
             echo '</div>';
             return;
         }
@@ -118,7 +211,44 @@ class SalesListPage extends AdminPage
         }
 
         echo '</tbody></table>';
+
+        if ($pages > 1) {
+            $this->render_pagination($filters, $page, $pages, $count);
+        }
+
         echo '</div>';
+    }
+
+    private function render_pagination(array $filters, int $page, int $pages, int $count): void
+    {
+        $args = ['page' => $this->get_slug()];
+
+        foreach ($filters as $key => $value) {
+            if ($value !== '') {
+                $args[$key] = rawurlencode($value);
+            }
+        }
+
+        $links = paginate_links([
+            'base'      => add_query_arg($args, admin_url('admin.php')) . '&paged=%#%',
+            'format'    => '',
+            'current'   => $page,
+            'total'     => $pages,
+            'prev_text' => '&lsaquo;',
+            'next_text' => '&rsaquo;',
+            'type'      => 'plain',
+        ]);
+
+        echo '<div class="tablenav bottom"><div class="tablenav-pages">';
+        echo '<span class="displaying-num">' . esc_html(sprintf(
+            /* translators: 1: current page, 2: total pages, 3: number of invoices */
+            __('Page %1$s of %2$s (%3$s invoices)', 'billnest'),
+            number_format_i18n($page),
+            number_format_i18n($pages),
+            number_format_i18n($count)
+        )) . '</span> ';
+        echo '<span class="pagination-links" style="display:inline-flex;gap:8px;">' . wp_kses_post((string) $links) . '</span>';
+        echo '</div></div>';
     }
 
     private function render_detail(int $invoice_id): void
