@@ -12,6 +12,7 @@ Universal WordPress POS, invoicing, inventory & basic accounting plugin. Standal
 - [Current Status](#current-status)
 - [Admin Pages](#admin-pages)
 - [Point of Sale in Detail](#point-of-sale-in-detail)
+- [Sales List in Detail](#sales-list-in-detail)
 - [Settings](#settings)
 - [Tech Stack](#tech-stack)
 - [Naming Conventions](#naming-conventions)
@@ -37,17 +38,19 @@ Working and tested locally:
 - **Stock check at sale:** with *Allow negative stock* turned off (the default), a sale cannot take a product below zero stock. The check runs inside the invoice transaction with a row lock, and lines for the same product are added together before checking. Turning the setting on allows selling beyond the stock
 - POS: multi-item sales, flat and percent discount (limits enforced on the server), live totals, tendered amount with change or due
 - **POS product search:** type a code, name or model instead of scrolling a dropdown. Results show price and stock, and can be picked with the keyboard
+- **POS customer search:** find a customer by name, phone or email. Results show the current due, and the picked customer's due is shown under the box. A walk-in sale needs no customer
 - **Live stock warning in the POS:** the available stock is shown under each selected product, and a warning appears when the requested quantity (all lines of the same product added together) is more than the stock. The server check stays the final word
+- **The POS keeps the form after a server error:** if the server rejects a sale (for example not enough stock), the customer, products, quantities, discount and payment lines come back filled in. A saved sale empties the form
 - **Split payments:** one bill can be paid with several methods (cash, card, bKash, Nagad, Rocket). Card and mobile payments require a reference. Non-cash payments can never exceed the bill, and the server enforces it
 - **Online payment discount rules:** an admin defines rules per payment method (flat or percent, optional maximum, minimum order, start and end date). When the whole bill is paid with one online method, the POS applies the best matching rule automatically and the server recalculates it independently. A manual discount always wins over a rule
 - Atomic invoice numbering and transaction-safe invoice save. A failed save rolls back everything, including the invoice number counter
-- Sales List, Invoice Detail with business header, payment lines and Print
+- Sales List with filters (invoice number or customer, date range, status), pagination and a summary line. Invoice Detail with business header, payment lines and Print
 - Sales Return (whole invoice): restock, due adjustment, refund per original method, cash-only cashbook entry
 - Due Collection (customer level, FIFO against oldest invoices)
 - Cashbook with automatic entries from sales, returns and collections, plus manual entries. Only cash enters the cashbook, card and mobile receipts stay in `invoice_payments`
 - Settings (business info, currency symbol and position, negative stock)
 
-Not built yet: purchases, partial returns, reports, PDF invoices, REST API, roles, customer search, Sales List filters and pagination. See the roadmap below.
+Not built yet: purchases, partial returns, reports, PDF invoices, REST API, roles. See the roadmap below.
 
 ### Verification status
 
@@ -57,6 +60,9 @@ A short list of what is still to be confirmed (some of it is handed to the QA te
 - Percent discount above 100 in the POS (a flat discount above the subtotal is verified)
 - Stock check: two lines of the same product going over the stock are flagged live in the POS, but the matching server-side rejection on save has not been seen yet (a single line going over the stock is rejected and saves nothing)
 - POS product search: the "No products found" message, and clearing a selection by editing the search text
+- POS customer search: picking a customer in the browser, the due note, the rule that disables Save while text is typed without picking a customer, and a sale saved with a customer
+- Form kept after a server error: the refill of customer, products, discount and payment lines, and the empty form after a saved sale with a customer
+- Sales List: the filter bar and summary line are seen working. Pagination, each filter (invoice number or customer, date range, status), the summary figures against the database, and filters surviving a page change are still to be confirmed
 - Server-side limits on the Due Collection and Cashbook forms
 - Returning an already returned invoice, and returning old invoices created before split payments existed
 - Card, Nagad and Rocket methods have not been saved yet (only cash and bKash)
@@ -73,8 +79,8 @@ All pages live under the **BillNest** menu and need the `manage_billnest` capabi
 | Products | Create, edit and soft delete products. Low-stock badge when stock reaches the reorder level |
 | Categories | Product categories with a parent category |
 | Customers | Customer records with opening balance and current due |
-| New Sale | The POS: product search, quantities, discount, split payments, live totals |
-| Sales List | All invoices, with a detail view, print and whole-invoice return |
+| New Sale | The POS: product and customer search, quantities, discount, split payments, live totals |
+| Sales List | All invoices with filters, pagination and a summary, plus a detail view, print and whole-invoice return |
 | Due Collection | Customer-level payments allocated first-in-first-out against the oldest open invoices |
 | Cashbook | Cash in and out ledger, automatic and manual entries |
 | Discount Rules | Online payment discount rules |
@@ -83,6 +89,13 @@ All pages live under the **BillNest** menu and need the `manage_billnest` capabi
 ---
 
 ## Point of Sale in Detail
+
+**Choosing a customer**
+- The customer box searches the name, phone and email. With several words, every word has to match. Names starting with the typed text come first, then phone numbers starting with it
+- Each result shows the phone, email and the current due (in red when the customer owes money). After picking a customer, a yellow note under the box shows the current due
+- Leaving the box empty, or pressing the clear button, means a walk-in sale
+- If text is typed but no customer is picked from the list, **Save Invoice** stays disabled and a note explains why, so a sale is never saved as walk-in by mistake
+- The customers are filtered in the browser from the list loaded with the page
 
 **Choosing products**
 - Each line has a search box. It matches the product code, name and model. With several words, every word has to match (for example `hood 680`)
@@ -104,6 +117,29 @@ All pages live under the **BillNest** menu and need the `manage_billnest` capabi
 - A manual flat or percent discount can be entered. When the whole bill is paid with one online method and no manual discount is set, the best matching online payment discount rule is previewed as "Online payment discount"
 - Card and mobile lines need a reference and cannot exceed the bill. The POS shows how much they exceed it by and disables Save. The server enforces the same rule
 - The figures in the browser are only a preview. The server calculates everything again
+
+**After a save**
+- A saved sale shows the invoice number and the form is emptied
+- If the server rejects the sale, an error shows and the form is refilled with what was entered. Prices, stock and the customer's due are taken from the freshly loaded data, not from the earlier page. A product or customer that is no longer active is left out
+
+---
+
+## Sales List in Detail
+
+**Filters** (all optional, combined with AND)
+- **Invoice no or customer:** matches part of the invoice number or the customer name
+- **From / To:** invoice date range. If From is later than To, the two are swapped
+- **Status:** All, Completed or Returned
+- **Reset** clears every filter
+
+**Pagination**
+- 20 invoices per page, newest first. The page links keep the active filters
+- The filtering, counting and paging all run in SQL (`LIMIT` / `OFFSET`), the whole list is never loaded into PHP
+
+**Summary line**
+- Number of invoices matching the filters, then the sales total and the due
+- The sales total and the due count **completed invoices only**. A returned invoice still shows its original total and due (see Known Gaps), so counting it would overstate both figures
+- The due includes sales to walk-in customers. A walk-in due has no customer to collect from, so this figure can be higher than the total due shown for customers
 
 ---
 
@@ -156,7 +192,7 @@ Settings are stored in the `billnest_settings` option. A setting missing from an
 - **Transaction-safe writes.** Every multi-table write (invoice creation, return, due collection) runs inside `START TRANSACTION` / `COMMIT` / `ROLLBACK`.
 - **Atomic invoice numbering.** A counter table with row-level locking (`SELECT ... FOR UPDATE`) avoids race conditions on concurrent terminals.
 - **Soft deletes.** Status flags over hard deletes, to preserve the audit trail.
-- **Security basics on every page.** Capability check, nonces on writes, sanitized input, escaped output, `$wpdb->prepare()` for user data.
+- **Security basics on every page.** Capability check, nonces on writes, sanitized input, escaped output, `$wpdb->prepare()` for user data. Read-only filters (like the Sales List) use sanitized GET parameters and prepared queries, no nonce is needed.
 
 ## Folder Structure (current)
 
@@ -182,8 +218,8 @@ billnest/
     │       SalesListPage, DueCollectionPage, CashbookPage,
     │       DiscountRulesPage, SettingsPage
     ├── DB/                      # $wpdb query layer
-    │   └── Product, Category, Customer, Invoice, InvoicePayment,
-    │       Cashbook, Payment, DiscountRule repositories
+    │   └── Product, Category, Customer, Invoice (list search and summary),
+    │       InvoicePayment, Cashbook, Payment, DiscountRule repositories
     └── Services/                # business logic
         └── NumberingService, StockService (stock changes and stock check),
             InvoiceService, ReturnService, PaymentService, PaymentMethods,
@@ -200,9 +236,9 @@ All tables prefixed `{$wpdb->prefix}billnest_`, InnoDB. Integrity is enforced in
 |---|---|
 | `products` | code (unique), name, category, model, unit, purchase/sale price, stock_qty, reorder_level, image_url, status |
 | `categories` | product categories with parent_id |
-| `customers` | contact, opening_balance, current_due, status |
+| `customers` | name, phone, email, address, opening_balance, current_due, status |
 | `counters` | atomic sequence generator for invoice numbering |
-| `invoices` | invoice_no, customer, subtotal, discount type (`flat`, `percent`, `rule`) / value / amount, `discount_rule_id`, total, received, due, status |
+| `invoices` | invoice_no, customer, subtotal, discount type (`flat`, `percent`, `rule`) / value / amount, `discount_rule_id`, total, received, due, status (`completed`, `returned`) |
 | `invoice_items` | line items per invoice |
 | `invoice_payments` | one row per payment method used on an invoice (method, amount, reference). Returns add negative `Refund` rows |
 | `discount_rules` | online payment discount rules: method, type (`flat` / `percent`), value, max_discount, min_order, start_date, end_date, status |
@@ -250,6 +286,9 @@ Invoices created before split payments existed have no `invoice_payments` rows. 
 **Cashbook**
 - Only cash enters the cashbook: sales, returns, collections and manual entries
 
+**Sales List figures**
+- The summary counts every invoice matching the filters, but adds up the total and the due of completed invoices only, because returned invoices keep their original figures for now
+
 ## REST API (planned)
 
 Base: `/wp-json/billnest/v1/`
@@ -280,7 +319,7 @@ All write routes require `current_user_can('manage_billnest')`, a nonce, and a `
 - [x] Product CRUD with categories, extended product fields, low-stock badge
 - [x] Customer CRUD, opening balance, due tracking
 
-### Phase 3: Core POS (mostly done)
+### Phase 3: Core POS (done)
 - [x] POS with multi-item sales and live totals
 - [x] Flat and percent discount
 - [x] Transaction-safe invoice save, atomic numbering
@@ -289,8 +328,9 @@ All write routes require `current_user_can('manage_billnest')`, a nonce, and a `
 - [x] "Allow negative stock" setting and stock check at sale
 - [x] Product search in the POS (code, name, model)
 - [x] Live stock warning in the POS
-- [x] Customer search in the POS
-- [ ] Sales list filters and pagination
+- [x] Customer search in the POS (name, phone, email)
+- [x] Keep the POS form filled after a server error
+- [x] Sales list filters, pagination and summary
 
 ### Phase 4: Money Flow (done)
 - [x] Due collection with FIFO allocation
@@ -325,25 +365,27 @@ All write routes require `current_user_can('manage_billnest')`, a nonce, and a `
 ### Cleanup
 - [ ] Rename `ProductsModule` to `AdminModule`
 - [ ] Move the POS inline JavaScript to its own file
-- [ ] Post/Redirect/Get on the POS form, keep inputs after an error
+- [ ] Post/Redirect/Get on the POS form (the inputs are already kept after an error)
 - [ ] Fix the POS line total column on very narrow screens
 - [ ] Returned invoices still show their original Received and Due figures
 - [ ] DB upgrade routine based on `billnest_db_version`
 - [ ] Rebuild `stock_qty` from `stock_log` on a schedule
-- [ ] Load POS products through the REST API (`/products?search=`) instead of embedding all of them in the page
+- [ ] Load POS products and customers through the REST API (`/products?search=`, `/customers?search=`) instead of embedding them all in the page
+- [ ] Keep the Sales List filters when coming back from an invoice detail page
 
 ## Known Gaps
 
 - A walk-in sale with a due has no customer to collect from
 - Opening-balance payments are not tracked separately from invoice dues
-- No invoice edit or cancel, and no pagination on lists
+- No invoice edit or cancel
+- Only the Sales List is paginated, the other lists are not yet
 - Returned invoices still show their original Received and Due figures
 - Card and mobile refunds are only recorded, the software cannot send money back
 - `payments.invoice_id` is intentionally unused (due collection is customer level)
-- The POS form is emptied after a server error, so the cashier has to pick the products again
-- The POS loads every active product into the page. This is fine for a few thousand products, a very large catalogue needs the REST search
+- The POS loads every active product and customer into the page. This is fine for a few thousand records, a very large catalogue needs the REST search
 - Stock figures in the POS are a snapshot from page load and do not refresh when another terminal sells. The server check is always applied at save
-- The customer field in the POS is still a plain dropdown
+- The Sales List filters are lost when going back from an invoice detail page
+- The Sales List due figure includes walk-in dues, which cannot be collected
 
 ## Development Process
 
@@ -377,3 +419,6 @@ Activate through WP Admin, Plugins, BillNest.
 - Allow negative stock setting and a locked, server-side stock check at sale
 - POS product search by code, name and model
 - Live stock warning in the POS
+- POS customer search by name, phone and email, with the customer's due shown
+- The POS form is kept filled after a server error
+- Sales List filters (invoice number or customer, date range, status), pagination and a summary line
