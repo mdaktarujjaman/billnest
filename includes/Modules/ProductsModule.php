@@ -18,7 +18,7 @@ if (! defined('ABSPATH')) {
     exit;
 }
 
-class ProductsModule implements Module
+class AdminModule implements Module
 {
 
     public function init(): void

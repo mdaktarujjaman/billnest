@@ -42,6 +42,6 @@ add_action( 'plugins_loaded', 'billnest_init' );
 
 function billnest_init() {
     $loader = new \BillNest\Loader();
-    $loader->register( new \BillNest\Modules\ProductsModule() );
+    $loader->register( new \BillNest\Modules\AdminModule() );
     $loader->run();
 }
