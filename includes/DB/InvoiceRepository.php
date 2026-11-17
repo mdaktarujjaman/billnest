@@ -222,4 +222,32 @@ class InvoiceRepository
             )
         );
     }
+
+    public function get_for_update(int $id): ?object
+    {
+        global $wpdb;
+
+        $invoice = $wpdb->get_row(
+            $wpdb->prepare("SELECT * FROM {$this->table} WHERE id = %d FOR UPDATE", $id)
+        );
+
+        return $invoice ?: null;
+    }
+
+    public function reduce_due(int $id, float $amount): void
+    {
+        global $wpdb;
+
+        $updated = $wpdb->query(
+            $wpdb->prepare(
+                "UPDATE {$this->table} SET due_amount = GREATEST(due_amount - %f, 0) WHERE id = %d",
+                $amount,
+                $id
+            )
+        );
+
+        if ($updated === false) {
+            throw new \RuntimeException('Could not update the invoice due.');
+        }
+    }
 }
