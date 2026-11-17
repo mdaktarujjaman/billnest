@@ -45,12 +45,14 @@ Working and tested locally:
 - **Online payment discount rules:** an admin defines rules per payment method (flat or percent, optional maximum, minimum order, start and end date). When the whole bill is paid with one online method, the POS applies the best matching rule automatically and the server recalculates it independently. A manual discount always wins over a rule
 - Atomic invoice numbering and transaction-safe invoice save. A failed save rolls back everything, including the invoice number counter
 - Sales List with filters (invoice number or customer, date range, status), pagination and a summary line. Invoice Detail with business header, payment lines and Print
-- Sales Return (whole invoice): restock, due adjustment, refund per original method, cash-only cashbook entry
+- **Sales Return (whole invoice):** restock, due adjustment, refund per original method, cash-only cashbook entry. Every return is now recorded in `invoice_returns` and `invoice_return_items`, so a return has its own history
 - Due Collection (customer level, FIFO against oldest invoices)
-- Cashbook with automatic entries from sales, returns and collections, plus manual entries. Only cash enters the cashbook, card and mobile receipts stay in `invoice_payments`
+- Cashbook with automatic entries from sales, returns and collections, plus manual entries. Only cash enters the cashbook, card and mobile receipts stay in `invoice_payments`. A failed cashbook insert now stops the whole operation instead of passing silently
 - Settings (business info, currency symbol and position, negative stock)
 
-Not built yet: purchases, partial returns, reports, PDF invoices, REST API, roles. See the roadmap below.
+Started but not usable yet: **partial (item-wise) return.** The return tables and the service logic exist (`ReturnService::process_partial_return`), but there is no screen for it and it has never been run. See *Verification status*.
+
+Not built yet: purchases, reports, PDF invoices, REST API, roles. See the roadmap below.
 
 ### Verification status
 
@@ -62,9 +64,12 @@ A short list of what is still to be confirmed (some of it is handed to the QA te
 - POS product search: the "No products found" message, and clearing a selection by editing the search text
 - POS customer search: picking a customer in the browser, the due note, the rule that disables Save while text is typed without picking a customer, and a sale saved with a customer
 - Form kept after a server error: the refill of customer, products, discount and payment lines, and the empty form after a saved sale with a customer
+- The POS script moved to `assets/admin/js/pos.js`: page load, the data handed over in `window.billnestPos` and a sale with an online payment discount were checked by the author after the move. The rest of the POS checks above still apply to the new file
 - Sales List: the filter bar and summary line are seen working. Pagination, each filter (invoice number or customer, date range, status), the summary figures against the database, and filters surviving a page change are still to be confirmed
 - Server-side limits on the Due Collection and Cashbook forms
-- Returning an already returned invoice, and returning old invoices created before split payments existed
+- Returns, what has been seen: a whole-invoice return of a sale paid with cash and bKash restocks both items, refunds each method in full, puts only the cash part in the cashbook and marks the invoice Returned, with the return row in `invoice_returns`
+- Returns, still to be confirmed: a whole-invoice return of a sale with a customer due (the due must be reduced first, then only the rest refunded), a return of an invoice that had a discount, returning an already returned invoice, returning old invoices created before split payments existed, and returning an invoice whose due was paid later through Due Collection (it is not yet confirmed that such a payment leaves an `invoice_payments` row, if it does not the return stops with an error and saves nothing)
+- Partial return: nothing has been run. The proportional discount, the quantity limits, the refund split and a whole return after a partial one are all unverified
 - Card, Nagad and Rocket methods have not been saved yet (only cash and bKash)
 
 ---
@@ -122,6 +127,10 @@ All pages live under the **BillNest** menu and need the `manage_billnest` capabi
 - A saved sale shows the invoice number and the form is emptied
 - If the server rejects the sale, an error shows and the form is refilled with what was entered. Prices, stock and the customer's due are taken from the freshly loaded data, not from the earlier page. A product or customer that is no longer active is left out
 
+**How the page is built**
+- `PosPage` renders the form and hands the products, customers, payment methods, discount rules, the form to restore and the currency settings to the browser through `wp_add_inline_script` as `window.billnestPos`
+- The behaviour lives in `assets/admin/js/pos.js`, loaded in the footer with its file modification time as the version. If the form is not on the page the script stops quietly
+
 ---
 
 ## Sales List in Detail
@@ -138,7 +147,7 @@ All pages live under the **BillNest** menu and need the `manage_billnest` capabi
 
 **Summary line**
 - Number of invoices matching the filters, then the sales total and the due
-- The sales total and the due count **completed invoices only**. A returned invoice still shows its original total and due (see Known Gaps), so counting it would overstate both figures
+- The sales total and the due count **completed invoices only**. A returned invoice still shows its original total (see Known Gaps), so counting it would overstate the figure
 - The due includes sales to walk-in customers. A walk-in due has no customer to collect from, so this figure can be higher than the total due shown for customers
 
 ---
@@ -188,8 +197,8 @@ Settings are stored in the `billnest_settings` option. A setting missing from an
 - **Abstract admin page base.** Every admin screen extends `BillNest\Admin\AdminPage`, keeping menu registration and capability checks consistent.
 - **One admin page class + one repository (+ one service when there is business logic) per feature.** No large file sprawl.
 - **Service layer separates business logic from data access.** Repositories only run queries; services hold business rules (stock, invoice totals, numbering, returns, payments, discount rules); admin pages handle input and output.
-- **Server is the source of truth.** Prices, discounts, discount rules, stock and payment limits are validated and calculated on the server. The browser only previews them.
-- **Transaction-safe writes.** Every multi-table write (invoice creation, return, due collection) runs inside `START TRANSACTION` / `COMMIT` / `ROLLBACK`.
+- **Server is the source of truth.** Prices, discounts, discount rules, stock, payment limits and return amounts are validated and calculated on the server. The browser only previews them.
+- **Transaction-safe writes.** Every multi-table write (invoice creation, return, due collection) runs inside `START TRANSACTION` / `COMMIT` / `ROLLBACK`. A repository write that fails throws, so the transaction rolls back instead of committing half of the work.
 - **Atomic invoice numbering.** A counter table with row-level locking (`SELECT ... FOR UPDATE`) avoids race conditions on concurrent terminals.
 - **Soft deletes.** Status flags over hard deletes, to preserve the audit trail.
 - **Security basics on every page.** Capability check, nonces on writes, sanitized input, escaped output, `$wpdb->prepare()` for user data. Read-only filters (like the Sales List) use sanitized GET parameters and prepared queries, no nonce is needed.
@@ -203,14 +212,14 @@ billnest/
 ├── readme.txt                   # WordPress.org readme (to be finalized)
 ├── assets/admin/
 │   ├── css/                     # pos.css, invoice.css, products.css
-│   └── js/                      # products.js (media library picker)
+│   └── js/                      # products.js (media library picker), pos.js (POS behaviour)
 └── includes/
     ├── Module.php               # interface every module implements
     ├── Loader.php               # runs modules, isolates failures
     ├── Activator.php            # dbDelta tables, capability, db version
     ├── Deactivator.php
     ├── Modules/
-    │   └── ProductsModule.php   # registers all admin pages (to be renamed AdminModule)
+    │   └── AdminModule.php      # registers all admin pages
     ├── Admin/
     │   ├── AdminPage.php        # abstract base
     │   ├── AdminMenu.php
@@ -218,8 +227,9 @@ billnest/
     │       SalesListPage, DueCollectionPage, CashbookPage,
     │       DiscountRulesPage, SettingsPage
     ├── DB/                      # $wpdb query layer
-    │   └── Product, Category, Customer, Invoice (list search and summary),
-    │       InvoicePayment, Cashbook, Payment, DiscountRule repositories
+    │   └── Product, Category, Customer, Invoice (list search, summary, row lock),
+    │       InvoicePayment, InvoiceReturn, Cashbook, Payment,
+    │       DiscountRule repositories
     └── Services/                # business logic
         └── NumberingService, StockService (stock changes and stock check),
             InvoiceService, ReturnService, PaymentService, PaymentMethods,
@@ -241,6 +251,8 @@ All tables prefixed `{$wpdb->prefix}billnest_`, InnoDB. Integrity is enforced in
 | `invoices` | invoice_no, customer, subtotal, discount type (`flat`, `percent`, `rule`) / value / amount, `discount_rule_id`, total, received, due, status (`completed`, `returned`) |
 | `invoice_items` | line items per invoice |
 | `invoice_payments` | one row per payment method used on an invoice (method, amount, reference). Returns add negative `Refund` rows |
+| `invoice_returns` | one row per return event: items_total, discount_share, return_total, due_reduced, refund_total, created_by |
+| `invoice_return_items` | one row per returned line, pointing at the original `invoice_item_id`, with qty, unit_price and amount |
 | `discount_rules` | online payment discount rules: method, type (`flat` / `percent`), value, max_discount, min_order, start_date, end_date, status |
 | `stock_log` | append-only ledger of every stock change (sale, sales_return, adjustment) |
 | `cashbook` | cash in/out ledger (sale, sales_return, payment, manual) |
@@ -252,7 +264,7 @@ Planned tables: `suppliers`, `purchases`, `purchase_items`.
 
 `dbDelta()` runs on activation only, so after a schema change deactivate and activate the plugin.
 
-Invoices created before split payments existed have no `invoice_payments` rows. The code treats their received amount as cash.
+Invoices created before split payments existed have no `invoice_payments` rows. The code treats their received amount as cash. Invoices returned before `invoice_returns` existed have status `returned` but no return row.
 
 ## Business Rules
 
@@ -278,7 +290,15 @@ Invoices created before split payments existed have no `invoice_payments` rows. 
 - A manual discount is capped on the server: a flat amount cannot be more than the subtotal and a percent cannot be more than 100. The stored value is the entered one, the stored discount amount is the capped one
 
 **Returns**
-- A whole-invoice return restocks every item, reduces the customer due by the remaining due, refunds each original payment method and enters only the cash part in the cashbook. Card and mobile refunds are recorded but must be paid back outside the software
+- Every return runs in one transaction and locks the invoice row first, so two returns of the same invoice cannot run at the same time. Only a `completed` invoice can be returned
+- A return can take back only what is left of each line: the original quantity minus what earlier returns already took. Quantities may have two decimals
+- The money for a return is the price of the returned lines minus their proportional share of the invoice discount (`discount_amount` divided by `subtotal`). When the last remaining lines are returned, the return takes whatever is left of the invoice total, so rounding never loses or invents a cent
+- The return amount first reduces the invoice's due (and the customer's due). Only the rest is refunded. A bill of 680 with 380 still due returns 380 as due and 300 as a refund
+- The refund is split across the original payment methods in proportion to what each can still give back (paid minus already refunded). It can never exceed what the method received. If the recorded payments cannot cover the refund, the return stops with an error and saves nothing
+- Only the cash part goes into the cashbook as `out`. Card and mobile refunds are recorded as negative `Refund` rows but must be paid back outside the software
+- Stock goes back through `StockService` with the type `sales_return`
+- The invoice becomes `returned` only when every line is fully returned. After a whole-invoice return its due is 0, while Received still shows the original amount
+- The whole-invoice return uses the same logic as a partial one, taking every remaining quantity
 
 **Due collection**
 - Customer level, amount must be above zero and not above the current due, allocated first-in-first-out against the oldest open invoices, then against the opening balance
@@ -287,7 +307,7 @@ Invoices created before split payments existed have no `invoice_payments` rows. 
 - Only cash enters the cashbook: sales, returns, collections and manual entries
 
 **Sales List figures**
-- The summary counts every invoice matching the filters, but adds up the total and the due of completed invoices only, because returned invoices keep their original figures for now
+- The summary counts every invoice matching the filters, but adds up the total and the due of completed invoices only, because returned invoices keep their original total for now
 
 ## REST API (planned)
 
@@ -341,7 +361,8 @@ All write routes require `current_user_can('manage_billnest')`, a nonce, and a `
 ### Phase 5: Offers, Returns and Purchases
 - [x] Sales return, whole invoice
 - [x] Online payment discount rules (admin page, automatic POS discount, server-side calculation)
-- [ ] Partial (item-wise) return
+- [x] Return history tables (`invoice_returns`, `invoice_return_items`) and refund split across the original methods
+- [ ] Partial (item-wise) return: tables and service logic are in, the screen on the invoice detail page (a return quantity per line) is still to be built, then all of it needs testing
 - [ ] Purchase module: suppliers, purchase invoices, stock-in
 
 ### Phase 6: Reports and Polish
@@ -363,11 +384,11 @@ All write routes require `current_user_can('manage_billnest')`, a nonce, and a `
 - [ ] WooCommerce order import and stock sync (imported orders keep their final amounts as they are)
 
 ### Cleanup
-- [ ] Rename `ProductsModule` to `AdminModule`
-- [ ] Move the POS inline JavaScript to its own file
+- [x] Rename `ProductsModule` to `AdminModule`
+- [x] Move the POS inline JavaScript to its own file
 - [ ] Post/Redirect/Get on the POS form (the inputs are already kept after an error)
 - [ ] Fix the POS line total column on very narrow screens
-- [ ] Returned invoices still show their original Received and Due figures
+- [ ] Show the original Received and Due figures on returned invoices (Due is now 0 after a return, Received stays as it was)
 - [ ] DB upgrade routine based on `billnest_db_version`
 - [ ] Rebuild `stock_qty` from `stock_log` on a schedule
 - [ ] Load POS products and customers through the REST API (`/products?search=`, `/customers?search=`) instead of embedding them all in the page
@@ -379,9 +400,12 @@ All write routes require `current_user_can('manage_billnest')`, a nonce, and a `
 - Opening-balance payments are not tracked separately from invoice dues
 - No invoice edit or cancel
 - Only the Sales List is paginated, the other lists are not yet
-- Returned invoices still show their original Received and Due figures
+- A returned invoice still shows its original Total and Received, and its Due is 0, so the invoice alone does not show what was refunded. The Payments table on the detail page shows the refund rows
+- The Sales List sales total counts completed invoices only, so a partial return will not lower it until returns are netted off
+- Partial returns have no screen yet
 - Card and mobile refunds are only recorded, the software cannot send money back
 - `payments.invoice_id` is intentionally unused (due collection is customer level)
+- It is not yet confirmed that paying an invoice's due through Due Collection leaves an `invoice_payments` row. If it does not, returning such an invoice stops with an error
 - The POS loads every active product and customer into the page. This is fine for a few thousand records, a very large catalogue needs the REST search
 - Stock figures in the POS are a snapshot from page load and do not refresh when another terminal sells. The server check is always applied at save
 - The Sales List filters are lost when going back from an invoice detail page
@@ -395,7 +419,7 @@ Local testing: WAMP, deactivate and activate after structural changes, and check
 
 Checks that are not done during development are listed under *Verification status* and handed to the QA team.
 
-If the browser shows an old look after a CSS change, do a hard refresh. The POS stylesheet uses its file modification time as its version, so it reloads on its own after a change.
+If the browser shows an old look after a CSS change, do a hard refresh. The POS stylesheet and script use their file modification time as the version, so they reload on their own after a change.
 
 ## Setup
 
@@ -422,3 +446,8 @@ Activate through WP Admin, Plugins, BillNest.
 - POS customer search by name, phone and email, with the customer's due shown
 - The POS form is kept filled after a server error
 - Sales List filters (invoice number or customer, date range, status), pagination and a summary line
+- The POS script moved to its own file, `assets/admin/js/pos.js`
+- `ProductsModule` renamed to `AdminModule`
+- Returns are recorded in `invoice_returns` and `invoice_return_items`. The refund is split across the original payment methods, the due is reduced before anything is refunded, and the invoice row is locked during a return
+- A failed cashbook insert now rolls back the whole operation
+- Groundwork for partial (item-wise) returns in `ReturnService`, without a screen yet
