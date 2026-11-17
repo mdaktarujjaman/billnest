@@ -45,6 +45,8 @@ class Activator
         self::create_payments_table($charset_collate);
         self::create_invoice_payments_table($charset_collate);
         self::create_discount_rules_table($charset_collate);
+        self::create_invoice_returns_table($charset_collate);
+        self::create_invoice_return_items_table($charset_collate);
     }
 
     private static function create_customers_table($charset_collate)
@@ -308,6 +310,54 @@ class Activator
         PRIMARY KEY  (id),
         KEY method_status (method, status),
         KEY dates (start_date, end_date)
+    ) $charset_collate ENGINE=InnoDB;";
+
+        dbDelta($sql);
+    }
+
+    // One row per return event (full or partial) on an invoice
+    private static function create_invoice_returns_table($charset_collate)
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'billnest_invoice_returns';
+
+        $sql = "CREATE TABLE $table_name (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        invoice_id BIGINT UNSIGNED NOT NULL,
+        items_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+        discount_share DECIMAL(12,2) NOT NULL DEFAULT 0,
+        return_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+        due_reduced DECIMAL(12,2) NOT NULL DEFAULT 0,
+        refund_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+        remarks TEXT DEFAULT NULL,
+        created_by BIGINT UNSIGNED DEFAULT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY  (id),
+        KEY invoice_id (invoice_id)
+    ) $charset_collate ENGINE=InnoDB;";
+
+        dbDelta($sql);
+    }
+
+    // One row per returned line, pointing at the original invoice item
+    private static function create_invoice_return_items_table($charset_collate)
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'billnest_invoice_return_items';
+
+        $sql = "CREATE TABLE $table_name (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        return_id BIGINT UNSIGNED NOT NULL,
+        invoice_item_id BIGINT UNSIGNED NOT NULL,
+        product_id BIGINT UNSIGNED NOT NULL,
+        qty DECIMAL(12,2) NOT NULL,
+        unit_price DECIMAL(12,2) NOT NULL,
+        amount DECIMAL(12,2) NOT NULL,
+        PRIMARY KEY  (id),
+        KEY return_id (return_id),
+        KEY invoice_item_id (invoice_item_id)
     ) $charset_collate ENGINE=InnoDB;";
 
         dbDelta($sql);

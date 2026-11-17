@@ -28,7 +28,7 @@ class CashbookRepository
     {
         global $wpdb;
 
-        $wpdb->insert(
+        $inserted = $wpdb->insert(
             $this->table,
             [
                 'type'       => $data['type'],
@@ -42,7 +42,11 @@ class CashbookRepository
             ['%s', '%f', '%s', '%d', '%s', '%d', '%s']
         );
 
-        return $wpdb->insert_id;
+        if ($inserted === false) {
+            throw new \RuntimeException('Could not save the cashbook entry.');
+        }
+
+        return (int) $wpdb->insert_id;
     }
 
     public function get_balance(): array
