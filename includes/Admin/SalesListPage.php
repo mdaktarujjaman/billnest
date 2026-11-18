@@ -5,6 +5,7 @@ namespace BillNest\Admin;
 use BillNest\DB\CustomerRepository;
 use BillNest\DB\InvoicePaymentRepository;
 use BillNest\DB\InvoiceRepository;
+use BillNest\DB\InvoiceReturnRepository;
 use BillNest\Services\PaymentMethods;
 use BillNest\Services\ReturnService;
 use BillNest\Services\SettingsService;
@@ -64,11 +65,29 @@ class SalesListPage extends AdminPage
 
         check_admin_referer('billnest_process_return_' . $invoice_id, 'billnest_return_nonce');
 
+        $mode     = sanitize_key(wp_unslash($_POST['return_mode'] ?? 'full'));
         $redirect = admin_url('admin.php?page=' . $this->get_slug() . '&action=view&id=' . $invoice_id);
 
         try {
-            (new ReturnService())->process_full_return($invoice_id);
+            $service = new ReturnService();
+
+            if ($mode === 'partial') {
+                $quantities = $this->read_return_quantities();
+
+                if (empty($quantities)) {
+                    throw new \InvalidArgumentException(__('Enter a quantity to return.', 'billnest'));
+                }
+
+                $service->process_partial_return($invoice_id, $quantities);
+            } else {
+                $service->process_full_return($invoice_id);
+            }
+
             $redirect = add_query_arg('returned', '1', $redirect);
+        } catch (\InvalidArgumentException | \RuntimeException $e) {
+            error_log('BillNest return rejected: ' . $e->getMessage());
+            $this->remember_return_error($e->getMessage());
+            $redirect = add_query_arg('return_error', '1', $redirect);
         } catch (\Throwable $e) {
             error_log('BillNest return failed: ' . $e->getMessage());
             $redirect = add_query_arg('return_error', '1', $redirect);
@@ -76,6 +95,52 @@ class SalesListPage extends AdminPage
 
         wp_safe_redirect($redirect);
         exit;
+    }
+
+    private function read_return_quantities(): array
+    {
+        $raw = isset($_POST['return_qty']) && is_array($_POST['return_qty'])
+            ? wp_unslash($_POST['return_qty'])
+            : [];
+
+        $quantities = [];
+
+        foreach ($raw as $item_id => $value) {
+            if (! is_scalar($value)) {
+                continue;
+            }
+
+            $item_id = absint($item_id);
+            $qty     = round((float) $value, 2);
+
+            if ($item_id > 0 && $qty > 0) {
+                $quantities[$item_id] = $qty;
+            }
+        }
+
+        return $quantities;
+    }
+
+    private function remember_return_error(string $message): void
+    {
+        set_transient('billnest_return_error_' . get_current_user_id(), $message, 60);
+    }
+
+    private function take_return_error(): string
+    {
+        $key     = 'billnest_return_error_' . get_current_user_id();
+        $message = get_transient($key);
+
+        if ($message !== false) {
+            delete_transient($key);
+        }
+
+        return is_string($message) ? $message : '';
+    }
+
+    private function format_qty(float $qty): string
+    {
+        return rtrim(rtrim(number_format($qty, 2, '.', ''), '0'), '.');
     }
 
     private function clean_date(string $value): string
@@ -267,18 +332,49 @@ class SalesListPage extends AdminPage
         }
 
         if (($_GET['returned'] ?? '') === '1') {
-            echo '<div class="notice notice-success is-dismissible billnest-no-print"><p>' . esc_html__('Invoice returned. Stock and customer due have been updated.', 'billnest') . '</p></div>';
+            echo '<div class="notice notice-success is-dismissible billnest-no-print"><p>' . esc_html__('Return saved. Stock, due and refunds have been updated.', 'billnest') . '</p></div>';
         }
 
         if (($_GET['return_error'] ?? '') === '1') {
-            echo '<div class="notice notice-error is-dismissible billnest-no-print"><p>' . esc_html__('This invoice could not be returned.', 'billnest') . '</p></div>';
+            $error = $this->take_return_error();
+
+            if ($error === '') {
+                $error = __('This invoice could not be returned.', 'billnest');
+            }
+
+            echo '<div class="notice notice-error is-dismissible billnest-no-print"><p>' . esc_html($error) . '</p></div>';
         }
 
         $items         = $repository->get_items($invoice_id);
         $payments      = (new InvoicePaymentRepository())->get_by_invoice($invoice_id);
+        $return_repo   = new InvoiceReturnRepository();
+        $returned_qty  = $return_repo->get_returned_qty_by_item($invoice_id);
+        $returns       = $return_repo->get_by_invoice($invoice_id);
         $customer      = $invoice->customer_id ? (new CustomerRepository())->get_by_id((int) $invoice->customer_id) : null;
         $customer_name = $customer ? $customer->name : __('Walk-in Customer', 'billnest');
         $settings      = new SettingsService();
+
+        $has_returns = ! empty($returns);
+        $left_by_id  = [];
+        $can_return  = false;
+
+        foreach ($items as $item) {
+            $left = max(0.0, round((float) $item->qty - (float) ($returned_qty[(int) $item->id] ?? 0), 2));
+
+            $left_by_id[(int) $item->id] = $left;
+
+            if ($left > 0) {
+                $can_return = true;
+            }
+        }
+
+        $can_return = $can_return && $invoice->status === 'completed';
+
+        $status_label = ucfirst($invoice->status);
+
+        if ($invoice->status === 'completed' && $has_returns) {
+            $status_label = __('Partially returned', 'billnest');
+        }
 
         echo '<p class="billnest-no-print"><a href="' . esc_url($list_url) . '">&larr; ' . esc_html__('Back to Sales List', 'billnest') . '</a></p>';
 
@@ -303,16 +399,17 @@ class SalesListPage extends AdminPage
         echo '<div class="billnest-invoice-header">';
         echo '<div>';
         echo '<h2>' . esc_html__('Invoice', 'billnest') . ' #' . esc_html($invoice->invoice_no) . '</h2>';
-        echo '<span class="billnest-status billnest-status-' . esc_attr($invoice->status) . '">' . esc_html(ucfirst($invoice->status)) . '</span>';
+        echo '<span class="billnest-status billnest-status-' . esc_attr($invoice->status) . '">' . esc_html($status_label) . '</span>';
         echo '</div>';
 
         echo '<div class="billnest-no-print billnest-header-actions">';
         echo '<button type="button" class="button button-primary" onclick="window.print()">' . esc_html__('Print', 'billnest') . '</button>';
 
-        if ($invoice->status === 'completed') {
-            echo '<form method="post" style="display:inline;" onsubmit="return confirm(\'' . esc_js(__('Process full return? This will restock all items and reverse the due amount.', 'billnest')) . '\');">';
+        if ($can_return) {
+            echo '<form method="post" style="display:inline;" onsubmit="return confirm(\'' . esc_js(__('Return all remaining items? This restocks them, reduces the due first and refunds the rest.', 'billnest')) . '\');">';
             wp_nonce_field('billnest_process_return_' . $invoice->id, 'billnest_return_nonce');
             echo '<input type="hidden" name="invoice_id" value="' . esc_attr($invoice->id) . '">';
+            echo '<input type="hidden" name="return_mode" value="full">';
             echo '<button type="submit" class="button billnest-return-btn">' . esc_html__('Process Return', 'billnest') . '</button>';
             echo '</form>';
         }
@@ -325,24 +422,67 @@ class SalesListPage extends AdminPage
         echo '<div><span class="billnest-meta-label">' . esc_html__('Date', 'billnest') . '</span><strong>' . esc_html($invoice->invoice_date) . '</strong></div>';
         echo '</div>';
 
+        if ($can_return) {
+            echo '<form method="post" class="billnest-return-form" onsubmit="return confirm(\'' . esc_js(__('Return the selected quantities?', 'billnest')) . '\');">';
+            wp_nonce_field('billnest_process_return_' . $invoice->id, 'billnest_return_nonce');
+            echo '<input type="hidden" name="invoice_id" value="' . esc_attr($invoice->id) . '">';
+            echo '<input type="hidden" name="return_mode" value="partial">';
+        }
+
         echo '<table class="billnest-invoice-items">';
         echo '<thead><tr>';
         echo '<th>' . esc_html__('Product', 'billnest') . '</th>';
         echo '<th class="billnest-num">' . esc_html__('Qty', 'billnest') . '</th>';
+
+        if ($has_returns) {
+            echo '<th class="billnest-num">' . esc_html__('Returned', 'billnest') . '</th>';
+        }
+
         echo '<th class="billnest-num">' . esc_html__('Unit Price', 'billnest') . '</th>';
         echo '<th class="billnest-num">' . esc_html__('Total', 'billnest') . '</th>';
+
+        if ($can_return) {
+            echo '<th class="billnest-num billnest-no-print">' . esc_html__('Return qty', 'billnest') . '</th>';
+        }
+
         echo '</tr></thead><tbody>';
 
         foreach ($items as $item) {
+            $item_id = (int) $item->id;
+            $left    = $left_by_id[$item_id] ?? 0.0;
+
             echo '<tr>';
             echo '<td>' . esc_html($item->product_name ?: __('(deleted product)', 'billnest')) . '</td>';
-            echo '<td class="billnest-num">' . esc_html(rtrim(rtrim(number_format((float) $item->qty, 2), '0'), '.')) . '</td>';
+            echo '<td class="billnest-num">' . esc_html($this->format_qty((float) $item->qty)) . '</td>';
+
+            if ($has_returns) {
+                echo '<td class="billnest-num">' . esc_html($this->format_qty((float) ($returned_qty[$item_id] ?? 0))) . '</td>';
+            }
+
             echo '<td class="billnest-num">' . esc_html($settings->format_amount((float) $item->unit_price)) . '</td>';
             echo '<td class="billnest-num">' . esc_html($settings->format_amount((float) $item->total)) . '</td>';
+
+            if ($can_return) {
+                echo '<td class="billnest-num billnest-no-print">';
+
+                if ($left > 0) {
+                    echo '<input type="number" name="return_qty[' . esc_attr((string) $item_id) . ']" min="0" max="' . esc_attr($this->format_qty($left)) . '" step="0.01" placeholder="0" style="width:90px;">';
+                } else {
+                    echo '&mdash;';
+                }
+
+                echo '</td>';
+            }
+
             echo '</tr>';
         }
 
         echo '</tbody></table>';
+
+        if ($can_return) {
+            echo '<p class="billnest-no-print" style="margin:12px 0;"><button type="submit" class="button billnest-return-btn">' . esc_html__('Return selected items', 'billnest') . '</button></p>';
+            echo '</form>';
+        }
 
         echo '<div class="billnest-invoice-summary">';
         echo '<div class="billnest-summary-row"><span>' . esc_html__('Subtotal', 'billnest') . '</span><span>' . esc_html($settings->format_amount((float) $invoice->subtotal)) . '</span></div>';
@@ -362,6 +502,10 @@ class SalesListPage extends AdminPage
 
         if (! empty($payments)) {
             $this->render_payments($payments, $settings);
+        }
+
+        if ($has_returns) {
+            $this->render_returns($returns, $settings);
         }
 
         if (! empty($invoice->remarks)) {
@@ -392,6 +536,35 @@ class SalesListPage extends AdminPage
             echo '<td>' . esc_html(PaymentMethods::label((string) $payment->method)) . '</td>';
             echo '<td>' . esc_html($payment->reference ?: '—') . '</td>';
             echo '<td class="billnest-num' . ($is_refund ? ' billnest-refund-text' : '') . '">' . esc_html($display) . '</td>';
+            echo '</tr>';
+        }
+
+        echo '</tbody></table>';
+        echo '</div>';
+    }
+
+    private function render_returns(array $returns, SettingsService $settings): void
+    {
+        echo '<div class="billnest-invoice-payments">';
+        echo '<h3>' . esc_html__('Returns', 'billnest') . '</h3>';
+        echo '<table class="billnest-invoice-items">';
+        echo '<thead><tr>';
+        echo '<th>' . esc_html__('Date', 'billnest') . '</th>';
+        echo '<th class="billnest-num">' . esc_html__('Items', 'billnest') . '</th>';
+        echo '<th class="billnest-num">' . esc_html__('Discount share', 'billnest') . '</th>';
+        echo '<th class="billnest-num">' . esc_html__('Return total', 'billnest') . '</th>';
+        echo '<th class="billnest-num">' . esc_html__('Due reduced', 'billnest') . '</th>';
+        echo '<th class="billnest-num">' . esc_html__('Refunded', 'billnest') . '</th>';
+        echo '</tr></thead><tbody>';
+
+        foreach ($returns as $return) {
+            echo '<tr>';
+            echo '<td>' . esc_html($return->created_at) . '</td>';
+            echo '<td class="billnest-num">' . esc_html($settings->format_amount((float) $return->items_total)) . '</td>';
+            echo '<td class="billnest-num">' . esc_html($settings->format_amount((float) $return->discount_share)) . '</td>';
+            echo '<td class="billnest-num">' . esc_html($settings->format_amount((float) $return->return_total)) . '</td>';
+            echo '<td class="billnest-num">' . esc_html($settings->format_amount((float) $return->due_reduced)) . '</td>';
+            echo '<td class="billnest-num">' . esc_html($settings->format_amount((float) $return->refund_total)) . '</td>';
             echo '</tr>';
         }
 

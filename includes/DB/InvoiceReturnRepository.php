@@ -103,4 +103,16 @@ class InvoiceReturnRepository
             )
         );
     }
+
+    public function get_by_invoice(int $invoice_id): array
+    {
+        global $wpdb;
+
+        return $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT * FROM {$this->table} WHERE invoice_id = %d ORDER BY id ASC",
+                $invoice_id
+            )
+        );
+    }
 }
