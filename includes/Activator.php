@@ -47,6 +47,7 @@ class Activator
         self::create_discount_rules_table($charset_collate);
         self::create_invoice_returns_table($charset_collate);
         self::create_invoice_return_items_table($charset_collate);
+        self::create_suppliers_table($charset_collate);
     }
 
     private static function create_customers_table($charset_collate)
@@ -358,6 +359,31 @@ class Activator
         PRIMARY KEY  (id),
         KEY return_id (return_id),
         KEY invoice_item_id (invoice_item_id)
+    ) $charset_collate ENGINE=InnoDB;";
+
+        dbDelta($sql);
+    }
+
+    // Suppliers, with the balance still owed to each of them
+    private static function create_suppliers_table($charset_collate)
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'billnest_suppliers';
+
+        $sql = "CREATE TABLE $table_name (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        name VARCHAR(255) NOT NULL,
+        phone VARCHAR(30) DEFAULT NULL,
+        email VARCHAR(255) DEFAULT NULL,
+        address TEXT DEFAULT NULL,
+        opening_balance DECIMAL(12,2) NOT NULL DEFAULT 0,
+        current_payable DECIMAL(12,2) NOT NULL DEFAULT 0,
+        status VARCHAR(20) NOT NULL DEFAULT 'active',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY  (id),
+        KEY phone (phone),
+        KEY status (status)
     ) $charset_collate ENGINE=InnoDB;";
 
         dbDelta($sql);

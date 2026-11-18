@@ -7,6 +7,7 @@ use BillNest\Admin\AdminMenu;
 use BillNest\Admin\ProductsPage;
 use BillNest\Admin\CategoriesPage;
 use BillNest\Admin\CustomersPage;
+use BillNest\Admin\SuppliersPage;
 use BillNest\Admin\PosPage;
 use BillNest\Admin\SalesListPage;
 use BillNest\Admin\DueCollectionPage;
@@ -28,6 +29,7 @@ class AdminModule implements Module
         $menu->register_page(new ProductsPage());
         $menu->register_page(new CategoriesPage());
         $menu->register_page(new CustomersPage());
+        $menu->register_page(new SuppliersPage());
         $menu->register_page(new PosPage());
         $menu->register_page(new SalesListPage());
         $menu->register_page(new DueCollectionPage());
