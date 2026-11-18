@@ -4,6 +4,7 @@ namespace BillNest\Admin;
 
 use BillNest\DB\CustomerRepository;
 use BillNest\DB\PaymentRepository;
+use BillNest\Services\PaymentMethods;
 use BillNest\Services\PaymentService;
 use BillNest\Services\SettingsService;
 
@@ -13,12 +14,6 @@ if (! defined('ABSPATH')) {
 
 class DueCollectionPage extends AdminPage
 {
-
-    private const METHODS = [
-        'cash'   => 'Cash',
-        'bank'   => 'Bank Transfer',
-        'mobile' => 'Mobile Banking',
-    ];
 
     public function get_slug(): string
     {
@@ -66,11 +61,8 @@ class DueCollectionPage extends AdminPage
 
         check_admin_referer('billnest_collect_payment_' . $customer_id, 'billnest_payment_nonce');
 
-        $method = sanitize_key($_POST['method'] ?? 'cash');
-
-        if (! isset(self::METHODS[$method])) {
-            $method = 'cash';
-        }
+        $method    = sanitize_key(wp_unslash($_POST['method'] ?? 'cash'));
+        $reference = sanitize_text_field(wp_unslash($_POST['reference'] ?? ''));
 
         try {
             (new PaymentService())->collect(
@@ -78,7 +70,8 @@ class DueCollectionPage extends AdminPage
                 floatval($_POST['amount'] ?? 0),
                 $method,
                 sanitize_text_field(wp_unslash($_POST['remarks'] ?? '')),
-                get_current_user_id()
+                get_current_user_id(),
+                $reference
             );
         } catch (\RuntimeException $e) {
             return $e->getMessage();
@@ -154,7 +147,7 @@ class DueCollectionPage extends AdminPage
                 echo '<td>' . esc_html($payment->payment_date) . '</td>';
                 echo '<td>' . esc_html($payment->customer_name) . '</td>';
                 echo '<td class="billnest-cash-in-text">' . esc_html($settings->format_amount((float) $payment->amount)) . '</td>';
-                echo '<td>' . esc_html(self::METHODS[$payment->method] ?? ucfirst($payment->method)) . '</td>';
+                echo '<td>' . esc_html(PaymentMethods::label((string) $payment->method)) . '</td>';
                 echo '<td>' . esc_html($payment->remarks) . '</td>';
                 echo '</tr>';
             }
@@ -206,10 +199,14 @@ class DueCollectionPage extends AdminPage
 
             echo '<tr><th><label for="method">' . esc_html__('Method', 'billnest') . '</label></th>';
             echo '<td><select name="method" id="method">';
-            foreach (self::METHODS as $key => $label) {
+            foreach (PaymentMethods::all() as $key => $label) {
                 echo '<option value="' . esc_attr($key) . '">' . esc_html($label) . '</option>';
             }
             echo '</select></td></tr>';
+
+            echo '<tr><th><label for="reference">' . esc_html__('Reference', 'billnest') . '</label></th>';
+            echo '<td><input type="text" class="regular-text" name="reference" id="reference" maxlength="60">';
+            echo '<p class="description">' . esc_html__('Transaction ID or approval code. Required for card and mobile payments.', 'billnest') . '</p></td></tr>';
 
             echo '<tr><th><label for="remarks">' . esc_html__('Remarks', 'billnest') . '</label></th>';
             echo '<td><input type="text" class="regular-text" name="remarks" id="remarks"></td></tr>';
@@ -238,7 +235,7 @@ class DueCollectionPage extends AdminPage
                 echo '<tr>';
                 echo '<td>' . esc_html($payment->payment_date) . '</td>';
                 echo '<td class="billnest-cash-in-text">' . esc_html($settings->format_amount((float) $payment->amount)) . '</td>';
-                echo '<td>' . esc_html(self::METHODS[$payment->method] ?? ucfirst($payment->method)) . '</td>';
+                echo '<td>' . esc_html(PaymentMethods::label((string) $payment->method)) . '</td>';
                 echo '<td>' . esc_html($payment->remarks) . '</td>';
                 echo '</tr>';
             }
