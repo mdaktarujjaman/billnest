@@ -43,7 +43,7 @@ class ProductRepository
         return $product ?: null;
     }
 
-        public function get_stock_for_update(int $id): ?object
+    public function get_stock_for_update(int $id): ?object
     {
         global $wpdb;
 
@@ -55,6 +55,26 @@ class ProductRepository
         );
 
         return $product ?: null;
+    }
+
+    public function set_purchase_price(int $id, float $price): void
+    {
+        global $wpdb;
+
+        $updated = $wpdb->update(
+            $this->table,
+            [
+                'purchase_price' => $price,
+                'updated_at'     => current_time('mysql'),
+            ],
+            ['id' => $id],
+            ['%f', '%s'],
+            ['%d']
+        );
+
+        if ($updated === false) {
+            throw new \RuntimeException('Could not update the purchase price.');
+        }
     }
 
     public function code_exists(string $code, int $exclude_id = 0): bool

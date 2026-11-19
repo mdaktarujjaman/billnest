@@ -48,6 +48,9 @@ class Activator
         self::create_invoice_returns_table($charset_collate);
         self::create_invoice_return_items_table($charset_collate);
         self::create_suppliers_table($charset_collate);
+        self::create_purchases_table($charset_collate);
+        self::create_purchase_items_table($charset_collate);
+        self::create_purchase_payments_table($charset_collate);
     }
 
     private static function create_customers_table($charset_collate)
@@ -384,6 +387,79 @@ class Activator
         PRIMARY KEY  (id),
         KEY phone (phone),
         KEY status (status)
+    ) $charset_collate ENGINE=InnoDB;";
+
+        dbDelta($sql);
+    }
+
+    // One row per purchase from a supplier
+    private static function create_purchases_table($charset_collate)
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'billnest_purchases';
+
+        $sql = "CREATE TABLE $table_name (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        purchase_no VARCHAR(50) NOT NULL,
+        supplier_id BIGINT UNSIGNED DEFAULT NULL,
+        purchase_date DATE NOT NULL,
+        subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
+        total DECIMAL(12,2) NOT NULL DEFAULT 0,
+        paid_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+        due_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+        remarks TEXT DEFAULT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'completed',
+        created_by BIGINT UNSIGNED DEFAULT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY  (id),
+        UNIQUE KEY purchase_no (purchase_no),
+        KEY supplier_id (supplier_id),
+        KEY status (status)
+    ) $charset_collate ENGINE=InnoDB;";
+
+        dbDelta($sql);
+    }
+
+    // One row per purchased line
+    private static function create_purchase_items_table($charset_collate)
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'billnest_purchase_items';
+
+        $sql = "CREATE TABLE $table_name (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        purchase_id BIGINT UNSIGNED NOT NULL,
+        product_id BIGINT UNSIGNED NOT NULL,
+        qty DECIMAL(12,2) NOT NULL,
+        unit_cost DECIMAL(12,2) NOT NULL,
+        total DECIMAL(12,2) NOT NULL,
+        PRIMARY KEY  (id),
+        KEY purchase_id (purchase_id),
+        KEY product_id (product_id)
+    ) $charset_collate ENGINE=InnoDB;";
+
+        dbDelta($sql);
+    }
+
+    // One row per payment made to a supplier for a purchase
+    private static function create_purchase_payments_table($charset_collate)
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'billnest_purchase_payments';
+
+        $sql = "CREATE TABLE $table_name (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        purchase_id BIGINT UNSIGNED NOT NULL,
+        method VARCHAR(30) NOT NULL DEFAULT 'cash',
+        amount DECIMAL(12,2) NOT NULL,
+        reference VARCHAR(100) DEFAULT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY  (id),
+        KEY purchase_id (purchase_id),
+        KEY method (method)
     ) $charset_collate ENGINE=InnoDB;";
 
         dbDelta($sql);

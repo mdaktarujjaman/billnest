@@ -52,44 +52,41 @@ class StockService
 
     public function decrement_stock(int $product_id, float $qty, string $type, int $ref_id, string $ref_type): void
     {
-        global $wpdb;
-
-        $products_table = $wpdb->prefix . 'billnest_products';
-
-        $wpdb->query(
-            $wpdb->prepare(
-                "UPDATE $products_table SET stock_qty = stock_qty - %f WHERE id = %d",
-                $qty,
-                $product_id
-            )
-        );
-
-        $balance_after = $wpdb->get_var(
-            $wpdb->prepare("SELECT stock_qty FROM $products_table WHERE id = %d", $product_id)
-        );
-
-        $this->log_stock_change($product_id, -$qty, $type, $ref_id, $ref_type, (float) $balance_after);
+        $this->change_stock($product_id, -$qty, $type, $ref_id, $ref_type);
     }
 
     public function increment_stock(int $product_id, float $qty, string $type, int $ref_id, string $ref_type): void
+    {
+        $this->change_stock($product_id, $qty, $type, $ref_id, $ref_type);
+    }
+
+    private function change_stock(int $product_id, float $change, string $type, int $ref_id, string $ref_type): void
     {
         global $wpdb;
 
         $products_table = $wpdb->prefix . 'billnest_products';
 
-        $wpdb->query(
+        $updated = $wpdb->query(
             $wpdb->prepare(
                 "UPDATE $products_table SET stock_qty = stock_qty + %f WHERE id = %d",
-                $qty,
+                $change,
                 $product_id
             )
         );
+
+        if ($updated === false) {
+            throw new \RuntimeException('Could not update the stock.');
+        }
 
         $balance_after = $wpdb->get_var(
             $wpdb->prepare("SELECT stock_qty FROM $products_table WHERE id = %d", $product_id)
         );
 
-        $this->log_stock_change($product_id, $qty, $type, $ref_id, $ref_type, (float) $balance_after);
+        if ($balance_after === null) {
+            throw new \RuntimeException('Product not found for the stock change.');
+        }
+
+        $this->log_stock_change($product_id, $change, $type, $ref_id, $ref_type, (float) $balance_after);
     }
 
     private function format_qty(float $qty): string
@@ -101,7 +98,7 @@ class StockService
     {
         global $wpdb;
 
-        $wpdb->insert(
+        $inserted = $wpdb->insert(
             $wpdb->prefix . 'billnest_stock_log',
             [
                 'product_id'    => $product_id,
@@ -114,5 +111,9 @@ class StockService
             ],
             ['%d', '%f', '%s', '%d', '%s', '%f', '%s']
         );
+
+        if ($inserted === false) {
+            throw new \RuntimeException('Could not write the stock log.');
+        }
     }
 }
