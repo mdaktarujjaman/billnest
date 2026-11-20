@@ -13,6 +13,7 @@ Universal WordPress POS, invoicing, inventory & basic accounting plugin. Standal
 - [Admin Pages](#admin-pages)
 - [Point of Sale in Detail](#point-of-sale-in-detail)
 - [Sales List in Detail](#sales-list-in-detail)
+- [Suppliers, Purchases and Supplier Payments in Detail](#suppliers-purchases-and-supplier-payments-in-detail)
 - [Settings](#settings)
 - [Tech Stack](#tech-stack)
 - [Naming Conventions](#naming-conventions)
@@ -43,16 +44,21 @@ Working and tested locally:
 - **The POS keeps the form after a server error:** if the server rejects a sale (for example not enough stock), the customer, products, quantities, discount and payment lines come back filled in. A saved sale empties the form
 - **Split payments:** one bill can be paid with several methods (cash, card, bKash, Nagad, Rocket). Card and mobile payments require a reference. Non-cash payments can never exceed the bill, and the server enforces it
 - **Online payment discount rules:** an admin defines rules per payment method (flat or percent, optional maximum, minimum order, start and end date). When the whole bill is paid with one online method, the POS applies the best matching rule automatically and the server recalculates it independently. A manual discount always wins over a rule
-- Atomic invoice numbering and transaction-safe invoice save. A failed save rolls back everything, including the invoice number counter
+- Atomic invoice numbering and a transaction-safe invoice save. A failed save rolls back the invoice rows. Whether the invoice number counter rolls back with them is not confirmed yet, see *Verification status*
 - Sales List with filters (invoice number or customer, date range, status), pagination and a summary line. Invoice Detail with business header, payment lines and Print
 - **Sales Return (whole invoice):** restock, due adjustment, refund per original method, cash-only cashbook entry. Every return is recorded in `invoice_returns` and `invoice_return_items`, so a return has its own history, shown in a Returns table on the invoice detail page
 - Due Collection (customer level, FIFO against oldest invoices). It uses the same payment methods as the POS (cash, card, bKash, Nagad, Rocket), card and mobile need a reference, and every invoice a collection lands on gets its own `invoice_payments` row. Only cash enters the cashbook
-- Cashbook with automatic entries from sales, returns and collections, plus manual entries. Only cash enters the cashbook, card and mobile receipts stay in `invoice_payments`. A failed cashbook insert stops the whole operation instead of passing silently
+- Cashbook with automatic entries from sales, returns, collections, purchases and supplier payments, plus manual entries. Only cash enters the cashbook, card and mobile payments stay in their payment tables. A failed cashbook insert stops the whole operation instead of passing silently
 - Settings (business info, currency symbol and position, negative stock)
 
-Built but not yet checked in the browser: **partial (item-wise) return.** The invoice detail page has a return quantity per line, a Returned column and a Returns history table, backed by `ReturnService::process_partial_return`. It has never been run, see *Verification status*.
+Built but not yet checked in the browser:
 
-Not built yet: purchases, reports, PDF invoices, REST API, roles. See the roadmap below.
+- **Partial (item-wise) return.** The invoice detail page has a return quantity per line, a Returned column and a Returns history table, backed by `ReturnService::process_partial_return`. It has never been run
+- **Suppliers, purchases and supplier payments.** Suppliers (with an opening balance), a purchase entry page with product search, live totals and split payments that adds stock, and a Pay form that settles what is owed to a supplier oldest purchase first. The pages load and the tables exist, but a successful purchase save and a supplier payment have not been checked against the database. `StockService` was also changed in the same work (it now throws when a write fails), which touches the sales path
+
+See *Verification status* for exactly what has and has not been seen.
+
+Not built yet: purchases list and detail pages, purchase return, reports, PDF invoices, REST API, roles. See the roadmap below.
 
 ### Verification status
 
@@ -69,9 +75,16 @@ A short list of what is still to be confirmed (some of it is handed to the QA te
 - Server-side limits on the Due Collection and Cashbook forms
 - Returns, seen working: a whole-invoice return of a sale paid with cash and bKash restocks both items, refunds each method in full, puts only the cash part in the cashbook and marks the invoice Returned. Its return row is in `invoice_returns` and the invoice detail page shows the Returned column and the Returns table for it
 - Returns, still to be confirmed: a whole-invoice return of a sale with a customer due (the due must be reduced first, then only the rest refunded), a return of an invoice that had a discount, returning an already returned invoice, returning old invoices created before split payments existed, and returning an invoice whose due was paid later through Due Collection (such a return stops with an error and saves nothing when the recorded payments cannot cover the refund)
-- Partial return: the screen and the logic are written but nothing has been run in the browser. The return quantity fields and button on a completed invoice, the proportional discount, the quantity limits and their error messages, the refund split across methods, finishing the remaining items after a partial return, the Partially returned label, and hiding the return column when printing are all unverified
+- Partial return: the screen and the logic are written but nothing has been run in the browser. The return quantity fields and button on a completed invoice (they do show on a completed invoice, but nothing was submitted), the proportional discount, the quantity limits and their error messages, the refund split across methods, finishing the remaining items after a partial return, the Partially returned label, and hiding the return column when printing are all unverified
 - Due Collection: the page loads, the payment method list and the Reference field show up, a card or mobile payment without a reference is rejected and saves nothing, and a cash collection of 100 was seen reducing the customer due, adding an invoice payment row and a cashbook entry. A bKash (or other non-cash) collection with a reference, which must not touch the cashbook, has not been run
 - Card, Nagad and Rocket methods have not been saved yet (only cash and bKash)
+- **`StockService` on the sales path:** after `StockService` was changed to throw on failed writes, a POS sale of one Hoodie paid in cash was seen saving (invoice `26110028`, Completed, one Cash payment line). The stock, `stock_log`, cashbook and `invoice_payments` rows were not compared with the figures from before the sale, so the database side is unconfirmed. Returning that invoice has not been run either
+- **Invoice number rollback:** `NumberingService::get_next_invoice_number()` starts and commits its own transaction. If `InvoiceService` calls it inside its own transaction, the invoice number counter may not roll back with a failed sale. `InvoiceService.php` has not been read for this, so the statement that a failed save also rolls back the number is not confirmed
+- Suppliers, seen: the Suppliers page loads and its menu item sits after Customers, and the `suppliers` columns were checked in phpMyAdmin. Still to be confirmed: adding a supplier with an opening balance (list shows it, both `opening_balance` and `current_payable` hold it), no Opening Balance field when editing, delete blocked while a balance is owed and soft delete at zero, an empty name, a negative opening balance
+- Purchases, seen: the `purchases`, `purchase_items` and `purchase_payments` tables exist. The Purchases page loads with one product row and one payment row, the Reference field is disabled for Cash, and every PHP file passes `php -l`
+- Purchases, still to be confirmed: product search and the stock figure in the dropdown, the unit cost being filled from the product's purchase price (it depends on the product list carrying that column), live line total, subtotal and owed amount, the yellow warnings, enabling the Reference field for non-cash, adding and removing rows, and the form coming back after an error (`Line 1: choose a product from the list.`)
+- Purchase save, not confirmed against the database: a purchase with a supplier and a part payment (stock up, purchase price set to the latest cost, one cash `out` in the cashbook for the cash part only, supplier payable up by the unpaid part, purchase counter up), a full payment without a supplier, a part payment without a supplier (rejected), a non-cash payment without a reference, payments above the total, and an unchanged database after every rejection
+- Supplier payments, not run: a cash payment against the opening balance, a payment with a mobile method (cashbook unchanged), a missing reference, an amount above the balance, zero and negative amounts, payment history and the cashbook row (`Supplier payment`), and FIFO over open purchases (each purchase's paid and due amounts, a `purchase_payments` row carrying `supplier_payment_id`, the remainder taken from the opening balance without a purchase payment row)
 
 ---
 
@@ -85,6 +98,8 @@ All pages live under the **BillNest** menu and need the `manage_billnest` capabi
 | Products | Create, edit and soft delete products. Low-stock badge when stock reaches the reorder level |
 | Categories | Product categories with a parent category |
 | Customers | Customer records with opening balance and current due |
+| Suppliers | Supplier records with an opening balance and the current payable. A Pay form settles what is owed, with a payment history |
+| Purchases | Purchase entry: product search, quantities and unit costs, split payments, live totals. Adds stock |
 | New Sale | The POS: product and customer search, quantities, discount, split payments, live totals |
 | Sales List | All invoices with filters, pagination and a summary, plus a detail view, print, whole-invoice return and item-wise return |
 | Due Collection | Customer-level payments (cash, card, bKash, Nagad, Rocket) allocated first-in-first-out against the oldest open invoices |
@@ -159,6 +174,27 @@ All pages live under the **BillNest** menu and need the `manage_billnest` capabi
 
 ---
 
+## Suppliers, Purchases and Supplier Payments in Detail
+
+**Suppliers**
+- Name, phone, email, address and an **Opening Balance** (the amount already owed to the supplier, zero or more). The opening balance is set only when the supplier is added, it cannot be edited later. `current_payable` starts equal to it
+- The list shows the current payable. A **Pay** link appears only while something is owed
+- A supplier cannot be deleted while `current_payable` is not zero. Delete is a soft delete (`inactive`)
+
+**Purchase entry**
+- Pick a supplier (optional) and a date, then add product rows. Each row has a search box (code, name or model, up to 10 results with the stock), a quantity and a unit cost. The unit cost starts from the product's last purchase price and can be changed. Picking a product fills the quantity with 1 when it is empty
+- Payment rows (method, amount, reference) work as in the POS: card and mobile need a reference, the Reference field is disabled for cash
+- The page shows the line totals, Subtotal, Paid and **Owed to supplier** live, and a yellow warning when the payments exceed the total or when a balance is left without a supplier. The warnings are previews, the server decides
+- Rows are added and removed with **+ Add Item**, **+ Add Payment** and the × buttons. A payment row with an empty amount is ignored
+- If the server rejects the purchase, the error shows and the form comes back filled in. A saved purchase shows its number (`Purchase P26110001 saved...`)
+- The page needs JavaScript to build its rows. `PurchasePage` hands the products, payment methods, the form to restore and the currency settings to the browser through `wp_add_inline_script` as `window.billnestPurchase`, and the behaviour lives in `assets/admin/js/purchase.js`
+
+**Paying a supplier**
+- From the Suppliers list, **Pay** opens a form (amount, method, reference, remarks) with the balance owed and the payment history of that supplier. The amount starts at the full balance
+- The payment settles the oldest open purchases first. Whatever is left after the open purchases is taken from the opening balance part of the payable
+
+---
+
 ## Settings
 
 | Setting | Default | Notes |
@@ -203,10 +239,10 @@ Settings are stored in the `billnest_settings` option. A setting missing from an
 - **Interface-driven modules.** Modules implement `BillNest\Module` and are registered through `BillNest\Loader`. A failing module logs its error and is skipped; it never takes down the rest of the plugin.
 - **Abstract admin page base.** Every admin screen extends `BillNest\Admin\AdminPage`, keeping menu registration and capability checks consistent.
 - **One admin page class + one repository (+ one service when there is business logic) per feature.** No large file sprawl.
-- **Service layer separates business logic from data access.** Repositories only run queries; services hold business rules (stock, invoice totals, numbering, returns, payments, discount rules); admin pages handle input and output.
-- **Server is the source of truth.** Prices, discounts, discount rules, stock, payment limits and return amounts are validated and calculated on the server. The browser only previews them.
-- **Transaction-safe writes.** Every multi-table write (invoice creation, return, due collection) runs inside `START TRANSACTION` / `COMMIT` / `ROLLBACK`. A repository write that fails throws, so the transaction rolls back instead of committing half of the work.
-- **Atomic invoice numbering.** A counter table with row-level locking (`SELECT ... FOR UPDATE`) avoids race conditions on concurrent terminals.
+- **Service layer separates business logic from data access.** Repositories only run queries; services hold business rules (stock, invoice totals, numbering, returns, payments, purchases, discount rules); admin pages handle input and output.
+- **Server is the source of truth.** Prices, discounts, discount rules, stock, payment limits, return amounts, purchase totals and supplier balances are validated and calculated on the server. The browser only previews them.
+- **Transaction-safe writes.** Every multi-table write (invoice creation, return, due collection, purchase, supplier payment) runs inside `START TRANSACTION` / `COMMIT` / `ROLLBACK`. A repository write that fails throws, so the transaction rolls back instead of committing half of the work. `StockService` throws too when a stock update or its log row fails.
+- **Atomic numbering.** A counter table with row-level locking (`SELECT ... FOR UPDATE`) avoids race conditions on concurrent terminals. The invoice number method runs its own transaction, the purchase number method joins the caller's transaction.
 - **Soft deletes.** Status flags over hard deletes, to preserve the audit trail.
 - **Security basics on every page.** Capability check, nonces on writes, sanitized input, escaped output, `$wpdb->prepare()` for user data. Read-only filters (like the Sales List) use sanitized GET parameters and prepared queries, no nonce is needed.
 
@@ -218,8 +254,8 @@ billnest/
 ├── composer.json                # PSR-4 map: BillNest\ => includes/
 ├── readme.txt                   # WordPress.org readme (to be finalized)
 ├── assets/admin/
-│   ├── css/                     # pos.css, invoice.css, products.css
-│   └── js/                      # products.js (media library picker), pos.js (POS behaviour)
+│   ├── css/                     # pos.css, invoice.css, products.css, purchase.css
+│   └── js/                      # products.js (media library picker), pos.js (POS behaviour), purchase.js (purchase page behaviour)
 └── includes/
     ├── Module.php               # interface every module implements
     ├── Loader.php               # runs modules, isolates failures
@@ -230,16 +266,18 @@ billnest/
     ├── Admin/
     │   ├── AdminPage.php        # abstract base
     │   ├── AdminMenu.php
-    │   └── ProductsPage, CategoriesPage, CustomersPage, PosPage,
-    │       SalesListPage, DueCollectionPage, CashbookPage,
-    │       DiscountRulesPage, SettingsPage
+    │   └── ProductsPage, CategoriesPage, CustomersPage, SuppliersPage,
+    │       PurchasePage, PosPage, SalesListPage, DueCollectionPage,
+    │       CashbookPage, DiscountRulesPage, SettingsPage
     ├── DB/                      # $wpdb query layer
-    │   └── Product, Category, Customer, Invoice (list search, summary, row lock),
+    │   └── Product, Category, Customer, Supplier, SupplierPayment,
+    │       Purchase, Invoice (list search, summary, row lock),
     │       InvoicePayment, InvoiceReturn, Cashbook, Payment,
     │       DiscountRule repositories
     └── Services/                # business logic
         └── NumberingService, StockService (stock changes and stock check),
             InvoiceService, ReturnService, PaymentService, PaymentMethods,
+            PurchaseService, SupplierPaymentService,
             DiscountRuleService, SettingsService
 ```
 
@@ -254,20 +292,23 @@ All tables prefixed `{$wpdb->prefix}billnest_`, InnoDB. Integrity is enforced in
 | `products` | code (unique), name, category, model, unit, purchase/sale price, stock_qty, reorder_level, image_url, status |
 | `categories` | product categories with parent_id |
 | `customers` | name, phone, email, address, opening_balance, current_due, status |
-| `counters` | atomic sequence generator for invoice numbering |
+| `counters` | atomic sequence generator: rows `invoice` and `purchase` (the `purchase` row is created by the first purchase) |
 | `invoices` | invoice_no, customer, subtotal, discount type (`flat`, `percent`, `rule`) / value / amount, `discount_rule_id`, total, received, due, status (`completed`, `returned`) |
 | `invoice_items` | line items per invoice |
 | `invoice_payments` | one row per payment on an invoice (method, amount, reference): the sale payments, later due collections (reference `Due collection`) and negative `Refund` rows from returns |
 | `invoice_returns` | one row per return event: items_total, discount_share, return_total, due_reduced, refund_total, created_by |
 | `invoice_return_items` | one row per returned line, pointing at the original `invoice_item_id`, with qty, unit_price and amount |
 | `discount_rules` | online payment discount rules: method, type (`flat` / `percent`), value, max_discount, min_order, start_date, end_date, status |
-| `stock_log` | append-only ledger of every stock change (sale, sales_return, adjustment) |
-| `cashbook` | cash in/out ledger (sale, sales_return, payment, manual) |
+| `suppliers` | name, phone, email, address, opening_balance, current_payable, status |
+| `purchases` | purchase_no (unique), supplier_id (empty when no supplier), purchase_date, subtotal, total, paid_amount, due_amount, remarks, status (`completed`), created_by |
+| `purchase_items` | one row per purchased line: product, qty, unit_cost, total |
+| `purchase_payments` | one row per payment on a purchase (method, amount, reference). `supplier_payment_id` is set when the row comes from a later supplier payment, and empty for payments made at purchase time |
+| `supplier_payments` | one row per payment to a supplier: supplier_id, amount, method, reference, remarks, payment_date, created_by |
+| `stock_log` | append-only ledger of every stock change (types `sale`, `sales_return`, `purchase`, `adjustment`) |
+| `cashbook` | cash in/out ledger (sources `sale`, `sales_return`, `payment`, `manual`, `purchase`, `supplier_payment`) |
 | `payments` | customer-level due collections |
 
 Options: `billnest_settings` (business info, currency and negative stock) and `billnest_db_version`.
-
-Planned tables: `suppliers`, `purchases`, `purchase_items`.
 
 `dbDelta()` runs on activation only, so after a schema change deactivate and activate the plugin.
 
@@ -282,6 +323,7 @@ Invoices created before split payments existed have no `invoice_payments` rows. 
 - With the setting on, the check is skipped and stock can go below zero
 - A product that is already below zero cannot be sold while the setting is off
 - The server is the source of truth. The POS warning is only a convenience, and its figures are a snapshot taken when the page loaded
+- Every stock increase or decrease goes through `StockService`, which writes the new stock and a `stock_log` row. If the update, the product lookup or the log insert fails it throws, so the surrounding transaction rolls back
 
 **Payments**
 - Supported methods: cash, card, bKash, Nagad, Rocket (one list in `PaymentMethods`, easy to extend)
@@ -314,8 +356,24 @@ Invoices created before split payments existed have no `invoice_payments` rows. 
 - Each invoice a collection lands on gets an `invoice_payments` row with the method and the amount applied there, so a later return refunds that money by the method it came in. Only cash goes into the cashbook
 - Collections made before this change left no `invoice_payments` rows, so returning such an invoice stops with an error instead of guessing the method
 
+**Suppliers**
+- The opening balance is entered only when the supplier is added and must be zero or more. `current_payable` starts equal to it. Editing a supplier never changes the opening balance
+- A supplier whose `current_payable` is not zero cannot be deleted (`Pay the balance owed to this supplier before deleting it.`). Delete is a soft delete
+
+**Purchases** (`PurchaseService::create_purchase`)
+- Everything below is checked before the transaction starts: the date is valid, a chosen supplier is active, every line has an active product, a quantity above zero and a unit cost above zero (both rounded to two decimals), every payment has a valid method, an amount above zero and, for card and mobile, a reference of up to 60 characters. Payments above the purchase total are rejected
+- If part of the total is left unpaid, a supplier must be chosen. Without a supplier the full amount has to be paid (`Choose a supplier to leave a balance, or pay the full amount.`)
+- One transaction does the rest: it takes the next purchase number (a separate counter, `P` + year and month + four digits, for example `P26110001`), saves the purchase, and for every line saves the item row, adds the stock through `StockService` (type `purchase`) and sets the product's `purchase_price` to that line's unit cost. It then saves the payment rows, writes **one** cashbook `out` entry (source `purchase`) for the cash part only, and adds the unpaid part to the supplier's `current_payable`. If any write fails everything rolls back, including the purchase number
+- The product's `purchase_price` becomes the **latest** purchase cost, not an average. If the same product is on two lines, the last line's cost wins
+- Only cash enters the cashbook. Card and mobile payments are kept in `purchase_payments` only
+- There is no purchase return yet
+
+**Supplier payments** (`SupplierPaymentService::pay`)
+- The amount must be above zero and not more than the supplier's `current_payable`. The method must be valid, and card and mobile need a reference (up to 60 characters)
+- One transaction: it locks the supplier row (`FOR UPDATE`), re-checks the amount against the locked balance, saves a `supplier_payments` row, and settles the supplier's open purchases oldest first (by purchase date, then id). For each purchase it raises `paid_amount`, lowers `due_amount` and adds a `purchase_payments` row carrying the `supplier_payment_id`. Whatever is left after the open purchases is taken from the opening balance part and gets no `purchase_payments` row. Then `current_payable` goes down by the full amount. A cash payment adds one cashbook `out` entry (source `supplier_payment`, `ref_id` = the `supplier_payments` id). Any failure rolls everything back
+
 **Cashbook**
-- Only cash enters the cashbook: sales, returns, collections and manual entries
+- Only cash enters the cashbook: sales, returns, collections, purchases, supplier payments and manual entries
 
 **Sales List figures**
 - The summary counts every invoice matching the filters, but adds up the total and the due of completed invoices only, because returned invoices keep their original total for now
@@ -375,7 +433,11 @@ All write routes require `current_user_can('manage_billnest')`, a nonce, and a `
 - [x] Online payment discount rules (admin page, automatic POS discount, server-side calculation)
 - [x] Return history tables (`invoice_returns`, `invoice_return_items`) and refund split across the original methods
 - [ ] Partial (item-wise) return: tables, service logic and the invoice detail screen are written, all of it still needs to be run and checked
-- [ ] Purchase module: suppliers, purchase invoices, stock-in
+- [ ] Suppliers: table, repository, page and menu are written, the page loads, adding, editing and deleting still need to be checked
+- [ ] Purchase entry with stock-in: tables, service and the purchase page with `purchase.js` are written, the page loads, saving a purchase still needs to be checked against the database
+- [ ] Paying suppliers (FIFO over open purchases, opening balance last): written, not run
+- [ ] Purchases list and detail page
+- [ ] Purchase return (later)
 
 ### Phase 6: Reports and Polish
 - [ ] Dashboard with Chart.js
@@ -398,6 +460,7 @@ All write routes require `current_user_can('manage_billnest')`, a nonce, and a `
 ### Cleanup
 - [x] Rename `ProductsModule` to `AdminModule`
 - [x] Move the POS inline JavaScript to its own file
+- [ ] Read `InvoiceService.php` and confirm whether a failed sale also rolls back the invoice number counter
 - [ ] Post/Redirect/Get on the POS form (the inputs are already kept after an error)
 - [ ] Fix the POS line total column on very narrow screens
 - [ ] Show the original Received and Due figures on returned invoices (Due is now 0 after a return, Received stays as it was)
@@ -407,6 +470,7 @@ All write routes require `current_user_can('manage_billnest')`, a nonce, and a `
 - [ ] Keep the Sales List filters when coming back from an invoice detail page
 - [ ] Keep the entered values in the Due Collection form after an error
 - [ ] Show Partially returned in the Sales List status column
+- [ ] Customers page: it still uses the older style (a customer with a due can be deleted, `current_due` is shown as a raw number)
 
 ## Known Gaps
 
@@ -424,6 +488,11 @@ All write routes require `current_user_can('manage_billnest')`, a nonce, and a `
 - Stock figures in the POS are a snapshot from page load and do not refresh when another terminal sells. The server check is always applied at save
 - The Sales List filters are lost when going back from an invoice detail page
 - The Sales List due figure includes walk-in dues, which cannot be collected
+- There is no purchases list or purchase detail page yet, so a saved purchase can only be seen in the database, the cashbook, the stock log and the supplier's payable
+- There is no purchase return, and no purchase edit or cancel
+- Supplier payments are made at supplier level. A payment taken from the opening balance part has no purchase to point at, so it appears only in `supplier_payments`
+- The purchase page cannot be used without JavaScript, because its rows are built by `purchase.js`
+- The invoice number counter may not roll back with a failed sale, see *Verification status*. The purchase number does join the surrounding transaction
 
 ## Development Process
 
@@ -433,7 +502,7 @@ Local testing: WAMP, deactivate and activate after structural changes, and check
 
 Checks that are not done during development are listed under *Verification status* and handed to the QA team.
 
-If the browser shows an old look after a CSS change, do a hard refresh. The POS stylesheet and script use their file modification time as the version, so they reload on their own after a change.
+If the browser shows an old look after a CSS change, do a hard refresh. The POS and purchase stylesheets and scripts use their file modification time as the version, so they reload on their own after a change.
 
 ## Setup
 
@@ -466,3 +535,8 @@ Activate through WP Admin, Plugins, BillNest.
 - A failed cashbook insert now rolls back the whole operation
 - Item-wise returns: a return quantity per line on the invoice detail page, a Returned column, a Returns history table and a Partially returned label (not yet checked in the browser)
 - Due Collection uses the shared payment methods, needs a reference for card and mobile, records an `invoice_payments` row per invoice and keeps non-cash out of the cashbook
+- Suppliers with an opening balance and a current payable, and a delete that is blocked while something is owed
+- Purchases: a purchase entry page with product search, live totals, split payments and a unit cost that starts from the last purchase price. A purchase adds stock, sets the product's purchase price to the latest cost, writes cash-only cashbook entries and raises the supplier's payable by the unpaid part. Own purchase number counter (`P` + year and month + four digits)
+- `StockService` now throws when a stock update, a product lookup or a stock log insert fails, so a failed write rolls the whole operation back (this also affects sales and returns)
+- Paying suppliers: a Pay form on the Suppliers page, settling the oldest open purchases first and then the opening balance, with a payment history, a new `supplier_payments` table, a nullable `purchase_payments.supplier_payment_id` and cash-only cashbook entries (source `supplier_payment`)
+- The purchase and supplier payment work has not been fully checked in the browser and the database yet, see *Verification status*
