@@ -51,6 +51,7 @@ class Activator
         self::create_purchases_table($charset_collate);
         self::create_purchase_items_table($charset_collate);
         self::create_purchase_payments_table($charset_collate);
+        self::create_supplier_payments_table($charset_collate);
     }
 
     private static function create_customers_table($charset_collate)
@@ -453,12 +454,39 @@ class Activator
         $sql = "CREATE TABLE $table_name (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         purchase_id BIGINT UNSIGNED NOT NULL,
+        supplier_payment_id BIGINT UNSIGNED DEFAULT NULL,
         method VARCHAR(30) NOT NULL DEFAULT 'cash',
         amount DECIMAL(12,2) NOT NULL,
         reference VARCHAR(100) DEFAULT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY  (id),
         KEY purchase_id (purchase_id),
+        KEY supplier_payment_id (supplier_payment_id),
+        KEY method (method)
+    ) $charset_collate ENGINE=InnoDB;";
+
+        dbDelta($sql);
+    }
+
+    // One row per payment made to a supplier against what we owe them
+    private static function create_supplier_payments_table($charset_collate)
+    {
+        global $wpdb;
+
+        $table_name = $wpdb->prefix . 'billnest_supplier_payments';
+
+        $sql = "CREATE TABLE $table_name (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        supplier_id BIGINT UNSIGNED NOT NULL,
+        amount DECIMAL(12,2) NOT NULL,
+        method VARCHAR(30) NOT NULL DEFAULT 'cash',
+        reference VARCHAR(100) DEFAULT NULL,
+        remarks TEXT DEFAULT NULL,
+        payment_date DATE NOT NULL,
+        created_by BIGINT UNSIGNED DEFAULT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY  (id),
+        KEY supplier_id (supplier_id),
         KEY method (method)
     ) $charset_collate ENGINE=InnoDB;";
 

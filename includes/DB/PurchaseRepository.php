@@ -71,24 +71,65 @@ class PurchaseRepository
         }
     }
 
-    public function create_payment(int $purchase_id, string $method, float $amount, ?string $reference): void
+    public function create_payment(int $purchase_id, string $method, float $amount, ?string $reference, ?int $supplier_payment_id = null): void
     {
         global $wpdb;
 
         $inserted = $wpdb->insert(
             $this->payments_table,
             [
-                'purchase_id' => $purchase_id,
-                'method'      => $method,
-                'amount'      => $amount,
-                'reference'   => $reference,
-                'created_at'  => current_time('mysql'),
+                'purchase_id'         => $purchase_id,
+                'supplier_payment_id' => $supplier_payment_id,
+                'method'              => $method,
+                'amount'              => $amount,
+                'reference'           => $reference,
+                'created_at'          => current_time('mysql'),
             ],
-            ['%d', '%s', '%f', '%s', '%s']
+            ['%d', '%d', '%s', '%f', '%s', '%s']
         );
 
         if ($inserted === false) {
             throw new \RuntimeException('Could not save the purchase payment.');
+        }
+    }
+
+    /**
+     * Purchases of a supplier that still have a balance, oldest first.
+     * Locks the rows, so call it inside a transaction.
+     */
+    public function get_open_for_supplier(int $supplier_id): array
+    {
+        global $wpdb;
+
+        return $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT id, purchase_no, due_amount FROM {$this->table}
+                 WHERE supplier_id = %d AND status = 'completed' AND due_amount > 0
+                 ORDER BY purchase_date ASC, id ASC
+                 FOR UPDATE",
+                $supplier_id
+            )
+        );
+    }
+
+    public function apply_payment(int $purchase_id, float $amount): void
+    {
+        global $wpdb;
+
+        $updated = $wpdb->query(
+            $wpdb->prepare(
+                "UPDATE {$this->table}
+                 SET paid_amount = paid_amount + %f, due_amount = due_amount - %f
+                 WHERE id = %d AND due_amount + 0.005 >= %f",
+                $amount,
+                $amount,
+                $purchase_id,
+                $amount
+            )
+        );
+
+        if ($updated === false || $updated === 0) {
+            throw new \RuntimeException('Could not apply the payment to the purchase.');
         }
     }
 }

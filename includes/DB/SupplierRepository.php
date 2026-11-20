@@ -37,6 +37,17 @@ class SupplierRepository
         return $supplier ?: null;
     }
 
+    public function get_for_update(int $id): ?object
+    {
+        global $wpdb;
+
+        $supplier = $wpdb->get_row(
+            $wpdb->prepare("SELECT * FROM {$this->table} WHERE id = %d FOR UPDATE", $id)
+        );
+
+        return $supplier ?: null;
+    }
+
     public function create(array $data): int
     {
         global $wpdb;
