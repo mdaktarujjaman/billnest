@@ -2,8 +2,11 @@
 
 namespace BillNest\Admin;
 
+use BillNest\DB\SupplierPaymentRepository;
 use BillNest\DB\SupplierRepository;
+use BillNest\Services\PaymentMethods;
 use BillNest\Services\SettingsService;
+use BillNest\Services\SupplierPaymentService;
 
 if (! defined('ABSPATH')) {
     exit;
@@ -34,6 +37,15 @@ class SuppliersPage extends AdminPage
             $error = $this->handle_form_submission();
         }
 
+        if ($error === null) {
+            $error = $this->handle_payment();
+        }
+
+        if (($_GET['action'] ?? '') === 'pay' && ! empty($_GET['id'])) {
+            $this->render_pay(absint($_GET['id']), $error);
+            return;
+        }
+
         $repository = new SupplierRepository();
         $suppliers  = $repository->get_all();
         $settings   = new SettingsService();
@@ -53,6 +65,10 @@ class SuppliersPage extends AdminPage
 
         if (($_GET['deleted'] ?? '') === '1') {
             echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Supplier deleted.', 'billnest') . '</p></div>';
+        }
+
+        if (($_GET['paid'] ?? '') === '1') {
+            echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Payment to the supplier saved.', 'billnest') . '</p></div>';
         }
 
         if ($error) {
@@ -78,6 +94,7 @@ class SuppliersPage extends AdminPage
 
         foreach ($suppliers as $supplier) {
             $edit_url = admin_url('admin.php?page=' . $this->get_slug() . '&action=edit&id=' . $supplier->id);
+            $pay_url  = admin_url('admin.php?page=' . $this->get_slug() . '&action=pay&id=' . $supplier->id);
 
             $delete_url = wp_nonce_url(
                 admin_url('admin.php?page=' . $this->get_slug() . '&action=delete&id=' . $supplier->id),
@@ -90,6 +107,11 @@ class SuppliersPage extends AdminPage
             echo '<td>' . esc_html($supplier->email) . '</td>';
             echo '<td>' . esc_html($settings->format_amount((float) $supplier->current_payable)) . '</td>';
             echo '<td>';
+
+            if ((float) $supplier->current_payable > 0.004) {
+                echo '<a href="' . esc_url($pay_url) . '">' . esc_html__('Pay', 'billnest') . '</a> | ';
+            }
+
             echo '<a href="' . esc_url($edit_url) . '">' . esc_html__('Edit', 'billnest') . '</a> | ';
             echo '<a href="' . esc_url($delete_url) . '" onclick="return confirm(\'' . esc_js(__('Delete this supplier?', 'billnest')) . '\');">' . esc_html__('Delete', 'billnest') . '</a>';
             echo '</td>';
@@ -185,6 +207,131 @@ class SuppliersPage extends AdminPage
 
         wp_safe_redirect(admin_url('admin.php?page=' . $this->get_slug() . '&saved=1'));
         exit;
+    }
+
+    private function handle_payment(): ?string
+    {
+        if (! isset($_POST['billnest_supplier_pay_nonce'])) {
+            return null;
+        }
+
+        $supplier_id = absint($this->post_text('supplier_id'));
+
+        check_admin_referer('billnest_pay_supplier_' . $supplier_id, 'billnest_supplier_pay_nonce');
+
+        try {
+            (new SupplierPaymentService())->pay(
+                $supplier_id,
+                (float) $this->post_text('amount'),
+                sanitize_key($this->post_text('method')),
+                sanitize_text_field($this->post_text('remarks')),
+                get_current_user_id(),
+                sanitize_text_field($this->post_text('reference'))
+            );
+        } catch (\InvalidArgumentException $e) {
+            return $e->getMessage();
+        } catch (\Throwable $e) {
+            error_log('BillNest supplier payment failed: ' . $e->getMessage());
+
+            return __('Something went wrong. The payment was not saved.', 'billnest');
+        }
+
+        wp_safe_redirect(admin_url('admin.php?page=' . $this->get_slug() . '&paid=1'));
+        exit;
+    }
+
+    private function render_pay(int $supplier_id, ?string $error): void
+    {
+        $supplier = (new SupplierRepository())->get_by_id($supplier_id);
+        $list_url = admin_url('admin.php?page=' . $this->get_slug());
+        $settings = new SettingsService();
+
+        echo '<div class="wrap">';
+
+        if (! $supplier || $supplier->status !== 'active') {
+            echo '<h1>' . esc_html__('Supplier not found', 'billnest') . '</h1>';
+            echo '<p><a href="' . esc_url($list_url) . '">&larr; ' . esc_html__('Back to Suppliers', 'billnest') . '</a></p>';
+            echo '</div>';
+            return;
+        }
+
+        $payable = (float) $supplier->current_payable;
+
+        echo '<p><a href="' . esc_url($list_url) . '">&larr; ' . esc_html__('Back to Suppliers', 'billnest') . '</a></p>';
+        echo '<h1>' . esc_html__('Pay Supplier', 'billnest') . ': ' . esc_html($supplier->name) . '</h1>';
+
+        if ($error) {
+            echo '<div class="notice notice-error"><p>' . esc_html($error) . '</p></div>';
+        }
+
+        echo '<p><strong>' . esc_html__('Balance owed', 'billnest') . ':</strong> ' . esc_html($settings->format_amount($payable)) . '</p>';
+
+        if ($payable <= 0.004) {
+            echo '<p>' . esc_html__('Nothing is owed to this supplier.', 'billnest') . '</p>';
+        } else {
+            $posted    = isset($_POST['billnest_supplier_pay_nonce']);
+            $amount    = $posted ? sanitize_text_field($this->post_text('amount')) : number_format($payable, 2, '.', '');
+            $method    = $posted ? sanitize_key($this->post_text('method')) : 'cash';
+            $reference = $posted ? sanitize_text_field($this->post_text('reference')) : '';
+            $remarks   = $posted ? sanitize_text_field($this->post_text('remarks')) : '';
+
+            echo '<form method="post">';
+            wp_nonce_field('billnest_pay_supplier_' . $supplier->id, 'billnest_supplier_pay_nonce');
+            echo '<input type="hidden" name="supplier_id" value="' . esc_attr($supplier->id) . '">';
+
+            echo '<table class="form-table">';
+            echo '<tr><th><label for="amount">' . esc_html__('Amount', 'billnest') . '</label></th>';
+            echo '<td><input type="number" step="0.01" min="0.01" max="' . esc_attr(number_format($payable, 2, '.', '')) . '" name="amount" id="amount" value="' . esc_attr($amount) . '" required></td></tr>';
+
+            echo '<tr><th><label for="method">' . esc_html__('Method', 'billnest') . '</label></th>';
+            echo '<td><select name="method" id="method">';
+            foreach (PaymentMethods::all() as $key => $label) {
+                echo '<option value="' . esc_attr($key) . '"' . selected($method, $key, false) . '>' . esc_html($label) . '</option>';
+            }
+            echo '</select></td></tr>';
+
+            echo '<tr><th><label for="reference">' . esc_html__('Reference', 'billnest') . '</label></th>';
+            echo '<td><input type="text" class="regular-text" name="reference" id="reference" maxlength="60" value="' . esc_attr($reference) . '">';
+            echo '<p class="description">' . esc_html__('Transaction ID or approval code. Required for card and mobile payments.', 'billnest') . '</p></td></tr>';
+
+            echo '<tr><th><label for="remarks">' . esc_html__('Remarks', 'billnest') . '</label></th>';
+            echo '<td><input type="text" class="regular-text" name="remarks" id="remarks" value="' . esc_attr($remarks) . '"></td></tr>';
+            echo '</table>';
+
+            submit_button(__('Pay Supplier', 'billnest'));
+            echo '</form>';
+        }
+
+        $history = (new SupplierPaymentRepository())->get_by_supplier($supplier_id);
+
+        echo '<h2>' . esc_html__('Payment History', 'billnest') . '</h2>';
+
+        if (empty($history)) {
+            echo '<p>' . esc_html__('No payments to this supplier yet.', 'billnest') . '</p>';
+        } else {
+            echo '<table class="wp-list-table widefat fixed striped">';
+            echo '<thead><tr>';
+            echo '<th>' . esc_html__('Date', 'billnest') . '</th>';
+            echo '<th>' . esc_html__('Amount', 'billnest') . '</th>';
+            echo '<th>' . esc_html__('Method', 'billnest') . '</th>';
+            echo '<th>' . esc_html__('Reference', 'billnest') . '</th>';
+            echo '<th>' . esc_html__('Remarks', 'billnest') . '</th>';
+            echo '</tr></thead><tbody>';
+
+            foreach ($history as $payment) {
+                echo '<tr>';
+                echo '<td>' . esc_html($payment->payment_date) . '</td>';
+                echo '<td>' . esc_html($settings->format_amount((float) $payment->amount)) . '</td>';
+                echo '<td>' . esc_html(PaymentMethods::label((string) $payment->method)) . '</td>';
+                echo '<td>' . esc_html((string) $payment->reference) . '</td>';
+                echo '<td>' . esc_html((string) $payment->remarks) . '</td>';
+                echo '</tr>';
+            }
+
+            echo '</tbody></table>';
+        }
+
+        echo '</div>';
     }
 
     private function render_form(?object $editing): void
