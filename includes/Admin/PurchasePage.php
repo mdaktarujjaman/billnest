@@ -6,6 +6,7 @@ use BillNest\DB\ProductRepository;
 use BillNest\DB\SupplierRepository;
 use BillNest\Services\PaymentMethods;
 use BillNest\Services\PurchaseService;
+use BillNest\Services\SettingsService;
 
 if (! defined('ABSPATH')) {
     exit;
@@ -14,8 +15,7 @@ if (! defined('ABSPATH')) {
 class PurchasePage extends AdminPage
 {
 
-    private const ITEM_ROWS    = 8;
-    private const PAYMENT_ROWS = 3;
+    private const HANDLE = 'billnest-purchase';
 
     public function get_slug(): string
     {
@@ -27,19 +27,42 @@ class PurchasePage extends AdminPage
         return __('Purchases', 'billnest');
     }
 
+    private function asset_version(string $relative_path): string
+    {
+        $file = dirname(__DIR__, 2) . '/' . $relative_path;
+
+        return file_exists($file) ? (string) filemtime($file) : BILLNEST_VERSION;
+    }
+
+    public function enqueue_assets(): void
+    {
+        wp_enqueue_style(
+            self::HANDLE,
+            BILLNEST_PLUGIN_URL . 'assets/admin/css/purchase.css',
+            [],
+            $this->asset_version('assets/admin/css/purchase.css')
+        );
+
+        wp_enqueue_script(
+            self::HANDLE,
+            BILLNEST_PLUGIN_URL . 'assets/admin/js/purchase.js',
+            [],
+            $this->asset_version('assets/admin/js/purchase.js'),
+            true
+        );
+    }
+
     public function render(): void
     {
         if (! current_user_can($this->get_capability())) {
             wp_die(esc_html__('You do not have permission to access this page.', 'billnest'));
         }
 
-        $products = (new ProductRepository())->get_all();
-        $lookup   = $this->build_lookup($products);
-        $form     = $this->read_form();
-        $error    = null;
+        $form  = $this->read_form();
+        $error = null;
 
         if (isset($_POST['billnest_purchase_nonce'])) {
-            $error = $this->handle_submission($form, $lookup);
+            $error = $this->handle_submission($form);
         }
 
         echo '<div class="wrap">';
@@ -59,7 +82,8 @@ class PurchasePage extends AdminPage
             echo '<div class="notice notice-error"><p>' . esc_html($error) . '</p></div>';
         }
 
-        $this->render_form($form, $products);
+        $this->render_form($form);
+        $this->provide_script_data($error ? $form : null);
 
         echo '</div>';
     }
@@ -90,9 +114,10 @@ class PurchasePage extends AdminPage
         foreach (array_values($this->post_array('items')) as $row) {
             $row     = is_array($row) ? $row : [];
             $items[] = [
-                'product' => sanitize_text_field($this->cell($row, 'product')),
-                'qty'     => sanitize_text_field($this->cell($row, 'qty')),
-                'cost'    => sanitize_text_field($this->cell($row, 'cost')),
+                'product_id' => absint($this->cell($row, 'product_id')),
+                'label'      => sanitize_text_field($this->cell($row, 'label')),
+                'qty'        => sanitize_text_field($this->cell($row, 'qty')),
+                'cost'       => sanitize_text_field($this->cell($row, 'cost')),
             ];
         }
 
@@ -116,30 +141,12 @@ class PurchasePage extends AdminPage
         ];
     }
 
-    private function build_lookup(array $products): array
-    {
-        $labels = [];
-        $codes  = [];
-
-        foreach ($products as $product) {
-            $labels[$this->product_label($product)]   = (int) $product->id;
-            $codes[strtolower((string) $product->code)] = (int) $product->id;
-        }
-
-        return ['labels' => $labels, 'codes' => $codes];
-    }
-
-    private function product_label(object $product): string
-    {
-        return $product->code . ' - ' . $product->name;
-    }
-
-    private function handle_submission(array $form, array $lookup): ?string
+    private function handle_submission(array $form): ?string
     {
         check_admin_referer('billnest_save_purchase', 'billnest_purchase_nonce');
 
         try {
-            $input       = $this->build_input($form, $lookup);
+            $input       = $this->build_input($form);
             $purchase_no = (new PurchaseService())->create_purchase($input, get_current_user_id());
         } catch (\InvalidArgumentException $e) {
             return $e->getMessage();
@@ -153,25 +160,24 @@ class PurchasePage extends AdminPage
         exit;
     }
 
-    private function build_input(array $form, array $lookup): array
+    private function build_input(array $form): array
     {
         $items = [];
 
         foreach ($form['items'] as $index => $row) {
-            if ($row['product'] === '' && $row['qty'] === '' && $row['cost'] === '') {
+            if ($row['product_id'] === 0 && $row['label'] === '' && $row['qty'] === '' && $row['cost'] === '') {
                 continue;
             }
 
-            $line       = $index + 1;
-            $product_id = $lookup['labels'][$row['product']] ?? ($lookup['codes'][strtolower($row['product'])] ?? 0);
+            $line = $index + 1;
 
-            if ($product_id === 0) {
+            if ($row['product_id'] === 0) {
                 throw new \InvalidArgumentException(sprintf(__('Line %d: choose a product from the list.', 'billnest'), $line));
             }
 
             $items[] = [
                 'row'        => $line,
-                'product_id' => $product_id,
+                'product_id' => $row['product_id'],
                 'qty'        => is_numeric($row['qty']) ? (float) $row['qty'] : 0.0,
                 'unit_cost'  => is_numeric($row['cost']) ? (float) $row['cost'] : 0.0,
             ];
@@ -201,20 +207,49 @@ class PurchasePage extends AdminPage
         ];
     }
 
-    private function render_form(array $form, array $products): void
+    private function provide_script_data(?array $restore): void
+    {
+        if (! wp_script_is(self::HANDLE, 'enqueued')) {
+            $this->enqueue_assets();
+        }
+
+        $settings     = new SettingsService();
+        $product_data = [];
+
+        foreach ((new ProductRepository())->get_all() as $product) {
+            $product_data[] = [
+                'id'    => (int) $product->id,
+                'code'  => (string) $product->code,
+                'name'  => (string) $product->name,
+                'model' => (string) ($product->model ?? ''),
+                'cost'  => (float) ($product->purchase_price ?? 0),
+                'stock' => (float) $product->stock_qty,
+            ];
+        }
+
+        $data = [
+            'products'       => $product_data,
+            'methods'        => PaymentMethods::all(),
+            'restore'        => $restore,
+            'currencySymbol' => $settings->get('currency_symbol'),
+            'currencyBefore' => $settings->get('currency_position') !== 'after',
+        ];
+
+        wp_add_inline_script(
+            self::HANDLE,
+            'window.billnestPurchase = ' . wp_json_encode($data) . ';',
+            'before'
+        );
+    }
+
+    private function render_form(array $form): void
     {
         $suppliers = (new SupplierRepository())->get_all();
         $date      = $form['date'] !== '' ? $form['date'] : current_time('Y-m-d');
 
         echo '<h2>' . esc_html__('New Purchase', 'billnest') . '</h2>';
 
-        echo '<datalist id="billnest-purchase-products">';
-        foreach ($products as $product) {
-            echo '<option value="' . esc_attr($this->product_label($product)) . '"></option>';
-        }
-        echo '</datalist>';
-
-        echo '<form method="post">';
+        echo '<form method="post" id="billnest-purchase-form">';
         wp_nonce_field('billnest_save_purchase', 'billnest_purchase_nonce');
 
         echo '<table class="form-table">';
@@ -233,48 +268,39 @@ class PurchasePage extends AdminPage
         echo '</table>';
 
         echo '<h3>' . esc_html__('Products', 'billnest') . '</h3>';
-        echo '<p class="description">' . esc_html__('Pick a product from the list or type its code. Leave unused rows empty.', 'billnest') . '</p>';
-        echo '<table class="widefat striped" style="max-width:900px;">';
-        echo '<thead><tr><th style="width:40px;">#</th><th>' . esc_html__('Product', 'billnest') . '</th><th style="width:130px;">' . esc_html__('Quantity', 'billnest') . '</th><th style="width:150px;">' . esc_html__('Unit cost', 'billnest') . '</th></tr></thead><tbody>';
-
-        $item_count = max(self::ITEM_ROWS, count($form['items']));
-
-        for ($i = 0; $i < $item_count; $i++) {
-            $row = $form['items'][$i] ?? ['product' => '', 'qty' => '', 'cost' => ''];
-
-            echo '<tr>';
-            echo '<td>' . esc_html((string) ($i + 1)) . '</td>';
-            echo '<td><input type="text" list="billnest-purchase-products" name="items[' . esc_attr((string) $i) . '][product]" value="' . esc_attr($row['product']) . '" class="regular-text" style="width:100%;" autocomplete="off"></td>';
-            echo '<td><input type="number" step="0.01" min="0" name="items[' . esc_attr((string) $i) . '][qty]" value="' . esc_attr($row['qty']) . '" style="width:100%;"></td>';
-            echo '<td><input type="number" step="0.01" min="0" name="items[' . esc_attr((string) $i) . '][cost]" value="' . esc_attr($row['cost']) . '" style="width:100%;"></td>';
-            echo '</tr>';
-        }
-
-        echo '</tbody></table>';
+        echo '<p class="description">' . esc_html__('Search by code, name or model and pick a product. The unit cost starts at the last purchase price and can be changed.', 'billnest') . '</p>';
+        echo '<table class="widefat striped billnest-pur-table">';
+        echo '<thead><tr>';
+        echo '<th>' . esc_html__('Product', 'billnest') . '</th>';
+        echo '<th style="width:130px;">' . esc_html__('Quantity', 'billnest') . '</th>';
+        echo '<th style="width:150px;">' . esc_html__('Unit cost', 'billnest') . '</th>';
+        echo '<th style="width:130px;">' . esc_html__('Line total', 'billnest') . '</th>';
+        echo '<th style="width:50px;"></th>';
+        echo '</tr></thead>';
+        echo '<tbody id="billnest-pur-items"></tbody>';
+        echo '</table>';
+        echo '<p><button type="button" class="button" id="billnest-pur-add-item">' . esc_html__('+ Add Item', 'billnest') . '</button></p>';
 
         echo '<h3>' . esc_html__('Payments', 'billnest') . '</h3>';
-        echo '<p class="description">' . esc_html__('Whatever is not paid now stays owed to the supplier. Card and mobile payments need a reference. Leave unused rows empty.', 'billnest') . '</p>';
-        echo '<table class="widefat striped" style="max-width:900px;">';
-        echo '<thead><tr><th style="width:40px;">#</th><th style="width:160px;">' . esc_html__('Method', 'billnest') . '</th><th style="width:150px;">' . esc_html__('Amount', 'billnest') . '</th><th>' . esc_html__('Reference', 'billnest') . '</th></tr></thead><tbody>';
+        echo '<p class="description">' . esc_html__('Whatever is not paid now stays owed to the supplier. Card and mobile payments need a reference. Leave the amount empty to skip a row.', 'billnest') . '</p>';
+        echo '<table class="widefat striped billnest-pur-table">';
+        echo '<thead><tr>';
+        echo '<th style="width:160px;">' . esc_html__('Method', 'billnest') . '</th>';
+        echo '<th style="width:150px;">' . esc_html__('Amount', 'billnest') . '</th>';
+        echo '<th>' . esc_html__('Reference', 'billnest') . '</th>';
+        echo '<th style="width:50px;"></th>';
+        echo '</tr></thead>';
+        echo '<tbody id="billnest-pur-payments"></tbody>';
+        echo '</table>';
+        echo '<p><button type="button" class="button" id="billnest-pur-add-payment">' . esc_html__('+ Add Payment', 'billnest') . '</button></p>';
 
-        $payment_count = max(self::PAYMENT_ROWS, count($form['payments']));
+        echo '<div class="billnest-pur-totals">';
+        echo '<div><span>' . esc_html__('Subtotal', 'billnest') . '</span><span id="billnest-pur-subtotal"></span></div>';
+        echo '<div><span>' . esc_html__('Paid', 'billnest') . '</span><span id="billnest-pur-paid"></span></div>';
+        echo '<div class="billnest-pur-balance-row"><span>' . esc_html__('Owed to supplier', 'billnest') . '</span><span id="billnest-pur-balance"></span></div>';
+        echo '</div>';
 
-        for ($i = 0; $i < $payment_count; $i++) {
-            $row = $form['payments'][$i] ?? ['method' => 'cash', 'amount' => '', 'reference' => ''];
-
-            echo '<tr>';
-            echo '<td>' . esc_html((string) ($i + 1)) . '</td>';
-            echo '<td><select name="payments[' . esc_attr((string) $i) . '][method]">';
-            foreach (PaymentMethods::all() as $key => $label) {
-                echo '<option value="' . esc_attr($key) . '"' . selected($row['method'], $key, false) . '>' . esc_html($label) . '</option>';
-            }
-            echo '</select></td>';
-            echo '<td><input type="number" step="0.01" min="0" name="payments[' . esc_attr((string) $i) . '][amount]" value="' . esc_attr($row['amount']) . '" style="width:100%;"></td>';
-            echo '<td><input type="text" name="payments[' . esc_attr((string) $i) . '][reference]" value="' . esc_attr($row['reference']) . '" maxlength="60" style="width:100%;"></td>';
-            echo '</tr>';
-        }
-
-        echo '</tbody></table>';
+        echo '<div class="notice notice-warning inline" id="billnest-pur-warning" hidden><p></p></div>';
 
         echo '<table class="form-table">';
         echo '<tr><th><label for="remarks">' . esc_html__('Remarks', 'billnest') . '</label></th>';

@@ -1,0 +1,84 @@
+.billnest-pur-table {
+    max-width: 900px;
+}
+
+.billnest-pur-table input[type="number"],
+.billnest-pur-table input[type="text"],
+.billnest-pur-table select {
+    width: 100%;
+}
+
+.billnest-pur-search {
+    position: relative;
+}
+
+.billnest-pur-results {
+    position: absolute;
+    z-index: 20;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin: 2px 0 0;
+    padding: 0;
+    max-height: 260px;
+    overflow: auto;
+    list-style: none;
+    background: #fff;
+    border: 1px solid #c3c4c7;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.billnest-pur-results li {
+    margin: 0;
+    padding: 6px 10px;
+    cursor: pointer;
+}
+
+.billnest-pur-results li.is-active {
+    background: #f0f6fc;
+}
+
+.billnest-pur-result-name {
+    display: block;
+    font-weight: 600;
+}
+
+.billnest-pur-result-meta {
+    display: block;
+    font-size: 12px;
+    color: #646970;
+}
+
+.billnest-pur-no-result {
+    color: #646970;
+    cursor: default;
+}
+
+.billnest-pur-product-input.is-selected {
+    border-color: #00a32a;
+}
+
+.billnest-pur-line {
+    white-space: nowrap;
+}
+
+.billnest-pur-totals {
+    max-width: 320px;
+    margin: 16px 0;
+    padding: 10px 14px;
+    background: #fff;
+    border: 1px solid #c3c4c7;
+}
+
+.billnest-pur-totals div {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 0;
+}
+
+.billnest-pur-totals .billnest-pur-balance-row {
+    margin-top: 4px;
+    padding-top: 6px;
+    border-top: 1px solid #c3c4c7;
+    font-weight: 600;
+}
