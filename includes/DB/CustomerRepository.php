@@ -114,12 +114,20 @@ class CustomerRepository
     {
         global $wpdb;
 
-        $wpdb->query(
+        $updated = $wpdb->query(
             $wpdb->prepare(
                 "UPDATE {$this->table} SET current_due = current_due + %f WHERE id = %d",
                 $amount,
                 $id
             )
         );
+
+        if ($updated === false) {
+            throw new \RuntimeException('Could not update the customer due.');
+        }
+
+        if ($updated === 0 && abs($amount) > 0.004) {
+            throw new \RuntimeException('Customer not found for the due update.');
+        }
     }
 }

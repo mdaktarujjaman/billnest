@@ -7,20 +7,37 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class NumberingService {
 
+    /**
+     * Must be called inside the caller's transaction. It takes the counter row lock
+     * and leaves the commit or rollback to the caller, so a failed sale gives its number back.
+     */
     public function get_next_invoice_number(): string {
         global $wpdb;
 
         $table = $wpdb->prefix . 'billnest_counters';
 
-        $wpdb->query( 'START TRANSACTION' );
+        $created = $wpdb->query(
+            $wpdb->prepare(
+                "INSERT INTO $table (counter_key, current_value) VALUES (%s, 0) ON DUPLICATE KEY UPDATE counter_key = counter_key",
+                'invoice'
+            )
+        );
+
+        if ( $created === false ) {
+            throw new \RuntimeException( 'Could not prepare the invoice counter.' );
+        }
 
         $current = $wpdb->get_var(
             $wpdb->prepare( "SELECT current_value FROM $table WHERE counter_key = %s FOR UPDATE", 'invoice' )
         );
 
+        if ( $current === null ) {
+            throw new \RuntimeException( 'Could not read the invoice counter.' );
+        }
+
         $next = (int) $current + 1;
 
-        $wpdb->update(
+        $updated = $wpdb->update(
             $table,
             [ 'current_value' => $next ],
             [ 'counter_key' => 'invoice' ],
@@ -28,7 +45,9 @@ class NumberingService {
             [ '%s' ]
         );
 
-        $wpdb->query( 'COMMIT' );
+        if ( $updated === false ) {
+            throw new \RuntimeException( 'Could not update the invoice counter.' );
+        }
 
         return $this->format_invoice_number( $next );
     }

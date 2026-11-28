@@ -152,7 +152,7 @@ class InvoiceRepository
     {
         global $wpdb;
 
-        $wpdb->insert(
+        $inserted = $wpdb->insert(
             $this->table,
             [
                 'invoice_no'       => $data['invoice_no'],
@@ -174,14 +174,20 @@ class InvoiceRepository
             ['%s', '%d', '%s', '%f', '%s', '%f', '%f', '%d', '%f', '%f', '%f', '%s', '%s', '%d', '%s']
         );
 
-        return $wpdb->insert_id;
+        $invoice_id = (int) $wpdb->insert_id;
+
+        if ($inserted === false || $invoice_id <= 0) {
+            throw new \RuntimeException('Could not save the invoice.');
+        }
+
+        return $invoice_id;
     }
 
     public function create_item(int $invoice_id, array $item): void
     {
         global $wpdb;
 
-        $wpdb->insert(
+        $inserted = $wpdb->insert(
             $this->items_table,
             [
                 'invoice_id' => $invoice_id,
@@ -192,26 +198,34 @@ class InvoiceRepository
             ],
             ['%d', '%d', '%f', '%f', '%f']
         );
+
+        if ($inserted === false) {
+            throw new \RuntimeException('Could not save the invoice item.');
+        }
     }
 
     public function update_status(int $id, string $status): void
     {
         global $wpdb;
 
-        $wpdb->update(
+        $updated = $wpdb->update(
             $this->table,
             ['status' => $status],
             ['id' => $id],
             ['%s'],
             ['%d']
         );
+
+        if ($updated === false) {
+            throw new \RuntimeException('Could not update the invoice status.');
+        }
     }
 
     public function apply_payment(int $id, float $amount): void
     {
         global $wpdb;
 
-        $wpdb->query(
+        $updated = $wpdb->query(
             $wpdb->prepare(
                 "UPDATE {$this->table}
                  SET received_amount = received_amount + %f, due_amount = due_amount - %f
@@ -221,6 +235,14 @@ class InvoiceRepository
                 $id
             )
         );
+
+        if ($updated === false) {
+            throw new \RuntimeException('Could not apply the payment to the invoice.');
+        }
+
+        if ($updated === 0 && abs($amount) > 0.004) {
+            throw new \RuntimeException('Invoice not found for the payment.');
+        }
     }
 
     public function get_for_update(int $id): ?object
